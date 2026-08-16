@@ -29,6 +29,10 @@
 - [ ] <條件 1>
 - [ ] <條件 2>
 
+## 環境備註
+
+這台機器的 bash 環境套了輸出壓縮工具(rtk),`git diff` 等指令有時只會顯示摘要(例如「Changes: 1 file changed, 1 insertion(+)」)、沒有逐行 +/- 內容——這是正常現象,不是 git 設定壞掉或指令用錯,不用花時間查 `.gitattributes`/diff driver。需要完整逐行輸出時,直接呼叫真實的 `/usr/bin/git` 繞過這層包裝即可。
+
 ---
 
 ## 完工前自查清單
