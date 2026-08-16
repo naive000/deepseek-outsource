@@ -97,7 +97,8 @@ DeepSeek API 是峰谷定價:
 
 ### 第 10 步 — CC 獨立驗收
 - **逐 commit 讀 diff**——不是只看 DeepSeek 的完工報告或自查結果。DeepSeek 的自查是「交件前品管」,CC 這步是「收件品管」,兩者不能互相取代。
-- 獨立重跑全部品質關卡:typecheck / lint / build / 專案特定檢查。
+- 獨立重跑全部品質關卡:typecheck / lint / build / 專案特定檢查。**自己重新跑一次,不要相信 DeepSeek 回報的跑測試結果**——如果需要另開虛擬環境驗證(例如 Python venv),CC 自己的沙箱通常不給直接寫 `/tmp`,要用 `$TMPDIR`。
+- 如果 DeepSeek 沒有主動 commit 改動(任務書沒明講的話很可能不會),CC 這步順手幫它 commit 一次再繼續驗收/merge。
 - Code Review 類型:抽查幾條具體發現,對照真實資料/行為驗證是否屬實。
 
 ### 第 11 步 — Merge 閘門
@@ -116,8 +117,13 @@ CC **不可自動 merge**。跟使用者確認一次(文字回覆「可以合併
 - **「新建会话」不是靠回根網址**:回根網址只會恢復上一個瀏覽過的 session,不會清空(純前端 SPA)。要開新會話,直接點側邊欄的「新建会话」按鈕。
 - **清空訊息框失敗**:用 `fill` 帶空字串會出 `InputValidationError`。改用 `click` 聚焦欄位,接著 `press: Control+a`、再 `press: Delete`。
 - **element ref 失效**:頁面導航/送出/重新渲染後,舊的 `[ref=eN]` 會失效,操作前先重新 `snapshot`。
-- **斷線重連後分頁擁有權消失**:重新用 `tabs` 開新分頁,不要沿用舊的 tab id。
+- **斷線重連後分頁擁有權消失**:重新用 `tabs` 開新分頁,不要沿用舊的 tab id。**開新分頁後,「回根網址恢復上次 session」這件事不保證成立**(MVP 2.0 實測撞過:重連後的新分頁直接進到空白的「选择工作区」畫面,沒有恢復到原本正在監控的 session)。這時候不要照上一條的邏輯瞎等,直接展開側邊欄,在 session 樹裡找回原本的 workspace/session 節點點進去。
 - **權限檔位選擇**:三檔(Read Only / Workspace Write / Full access),預設 Workspace Write,Full access 要使用者額外同意才能開。
+- **`/goal` 送出後輸入框不會清空**:這是正常現象,不是操作失敗,不用重複清空或重送。
+- **完工判定訊號**:goal 完成時,對話裡會出現一則「上下文注入 tool-goal complete: ...」的系統事件,DeepSeek 的收尾回報通常會用「改了什麼 / 驗收條件 / 自查清單」這種結構化小標題——看到這個格式基本可以認定完工,不用每次都去翻軌跡分頁逐條確認。
+- **DeepSeek 側環境坑:worktree 沒有 pytest,且 `pip install --user` 常被 PEP 668(externally-managed-environment)擋下**——這是預期內會發生的事,不算 DeepSeek 出錯。DeepSeek 通常會自己改用 worktree 外的 venv 或 `uv` 裝,這是正確處理方式,但要注意它會不會把安裝路徑弄進白名單範圍內。
+- **測試工具本身會在 worktree 留下白名單外的副產物**:`pytest` 執行會產生 `.pytest_cache/`,匯入模組會產生 `__pycache__/`——這些不是 DeepSeek「自己寫的」,但一樣算「動到白名單以外的檔案」,驗收時要連這些一起檢查有沒有清乾淨,不是只看有沒有多出非預期的 `.py` 檔。
+- **`.claude/.cc-writes/` 空目錄是平台沙箱的基礎設施產物**,跟 DeepSeek 的交付內容無關,已經被全域 gitignore(`~/.config/git/ignore` 的 `**/.claude/.cc-writes/`)排除、git 完全看不到它。看到這個目錄不用緊張,不算 DeepSeek 動了不該動的東西。
 
 ## 跟另一個 skill 的分工
 
