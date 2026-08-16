@@ -119,4 +119,4 @@ CC **不可自動 merge**。跟使用者確認一次(文字回覆「可以合併
 
 ## 跟另一個 skill 的分工
 
-這個 skill 管「委派工作流程」(討論→worktree→dispatch→監控→驗收→merge)。dsh 網頁 UI 本身各項功能的操作手冊(設定、預設模式、命令選單細節等)是另一個獨立 skill 的範圍,不在這裡重複。
+這個 skill 管「委派工作流程」(討論→worktree→dispatch→監控→驗收→merge)。dsh 網頁 UI 本身各項功能的操作手冊(設定、預設模式、命令選單細節等)是另一個獨立 skill `deepseek-manual` 的範圍,不在這裡重複。
