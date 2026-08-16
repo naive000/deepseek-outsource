@@ -26,10 +26,14 @@ DeepSeek 在自己的隔離分支裡想怎麼折騰都可以;main 分支跟 merg
 
 ## 觸發:先問清楚要幹嘛
 
-Skill 一啟動,用一次 `AskUserQuestion` 問完(不要拆成多輪):
+Skill 一啟動,用一次 `AskUserQuestion` 問完(不要拆成多輪,`AskUserQuestion` 一次最多 4 題,以下正好 4 題):
 
 1. **任務類型**(五選一,見下)
 2. **目標 repo / 專案路徑**(純研究/調查類型改問:輸出資料夾放哪)
+3. **權限檔位**(coding 類型才問;純研究/調查類型跳過,固定用 Workspace Write):Read Only / **Workspace Write**(預設,推薦)/ Full access——不管選哪一檔都要先讓使用者看到選項再決定,不能沿用「預設 Workspace Write 不問、只有 Full access 才問」的舊做法
+4. **Merge 後要不要自動刪除 worktree**(coding 類型才問;純研究/調查類型跳過,輸出資料夾去留仍照舊由使用者決定):**是,自動刪除**(預設,推薦)/ 否,留著讓我自己看——選「是」的話第 13 步收尾不會再問一次;選「否」則第 13 步照舊詢問
+
+觸發問完之後,順手記一筆使用記錄(見下方「使用記錄」)。
 
 ### 五種任務類型
 
@@ -42,6 +46,17 @@ Skill 一啟動,用一次 `AskUserQuestion` 問完(不要拆成多輪):
 | **純研究/調查**(2026-08-16 MVP 3.0 新增) | 上網查資料、整理、寫成報告,**不碰任何 code repo** | 一份 MD(或其他文字格式)報告 | CC 抽查一定比例的來源條目是否真實存在、內容有沒有對得上;檢查數量/日期範圍等硬指標是否達標;達標後 CC 用白話文幫使用者摘要重點 |
 
 五個選項都是實跑驗證過的真實案例,不是憑空設計——之後如果要加新類型,先找一個真實案例跑過一輪再定模板,不要臨時發明。
+
+## 使用記錄(2026-08-16 新增)
+
+每次觸發都在 `~/.claude/skills/deepseek-outsource/usage-log.jsonl` append 兩筆(這個檔案已加進 `.gitignore`,純本機記錄,不進版控):
+
+- **觸發當下**(問完 `AskUserQuestion` 之後):`{"ts":"<ISO時間>","event":"start","task_type":"...","target":"<repo路徑或輸出資料夾>","permission":"...","auto_delete_worktree":true/false,"offpeak":true/false}`
+- **第 13 步收尾時**:`{"ts":"<ISO時間>","event":"end","task_type":"...","target":"...","outcome":"merged|adopted|rejected|failed","auto_approvals":<這次跑期間自動核准了幾次升級提示>}`
+
+⚠️ **這個檔案要用 `Write`/`Edit` 工具寫,不要用 `bash echo >>`**——CC 自己的 sandbox 對 `~/.claude/skills/` 這個路徑的 bash 寫入是擋住的(讀取正常),用 `Read` 讀現有內容、組好新的一行、`Write` 整份寫回即可繞開這個限制。
+
+目的是之後(見 `ROADMAP.md` MVP 9.0)回頭統計「委派這件事實際花了多少次、什麼類型最常用、尖峰/離峰各跑了幾次」,不是要拿來做即時分析。
 
 **純研究/調查類型的差異**(跟其他四種比):
 - **不用建 git worktree**——沒有 code repo 要保護。改成:CC 建一個全新、空的輸出資料夾(不是 git repo,純資料夾),當作 browserclaw 選 workspace 時的路徑,天然把 DeepSeek 的活動範圍限制在這個資料夾。
@@ -84,7 +99,9 @@ git worktree add -b deepseek/<task-name> <path> <base-branch>
 工作區選擇走:「選擇工作區」→「添加工作區」→點「编辑路径」→直接貼絕對路徑(worktree 的完整路徑),清單會即時過濾,不用手動點資料夾樹。
 
 ### 第 5 步 — 設權限
-用 `/permission` 指令。**預設用 Workspace Write**。不要自己選 Full access——那是能逃逸沙箱的檔位,只有使用者明確同意才能開。
+用 `/permission` 指令,設成觸發時 `AskUserQuestion` 第 3 題使用者選的檔位,不用再問一次。Full access 是能逃逸沙箱的檔位,但既然觸發時已經讓使用者明確選過,這步驟不用二次確認。
+
+⚠️ **選 Full access 時,dsh 自己還有一道 UI 確認關卡**(2026-08-16 實測發現):點下「Full access」選項後會跳出「確認啟用 Full access?」對話框,裡面有一個必勾選的核取方塊「我已了解風險,並願意繼續」,勾了之後「啟用 Full access」按鈕才會從 disabled 變成可點。這是 dsh 自己的安全閘門,跟這份 skill 觸發時的 `AskUserQuestion` 是兩層獨立的確認——CC 這邊已經有使用者明確選過 Full access,所以照勾照點,不用因為看到這個對話框又跑去問使用者一次。
 
 ### 第 6 步 — 尖峰時段檢查
 這是送出 `/goal` 前的最後關卡,因為第 1-5 步都不花 DeepSeek API 的錢,只有這步之後才開始燒錢。
@@ -101,7 +118,14 @@ DeepSeek API 是峰谷定價:
 點「命令」按鈕選單裡的 `/goal`,它會把 `/goal ` 文字填進訊息框(不會自動送出)。把任務書內容貼進去,送出。
 
 ### 第 8 步 — 監控
-**固定每 10 分鐘檢查一次**(不可調整)。看「對話」分頁(排版過的閱讀視圖)快速掃進度;要精確判斷做了什麼動作時看「軌跡」分頁(原始事件表格,含完整參數),比對話分頁可靠。不要更密集地檢查,也不要自己排更短的輪詢間隔。
+**固定每 5 分鐘檢查一次**(2026-08-16 從 10 分鐘改快,不可再自行調整;縮短的原因見下——不是單純求快,是跟權限檔位選擇連動的)。看「對話」分頁(排版過的閱讀視圖)快速掃進度;要精確判斷做了什麼動作時看「軌跡」分頁(原始事件表格,含完整參數),比對話分頁可靠。不要更密集地檢查,也不要自己排更短的輪詢間隔。
+
+**遇到授權升級提示,範圍內的不用管,dsh 自己會過**(2026-08-16 首次實測驗證,推翻了原本「CC 要主動幫忙按確定」的設計):
+- 用一個真實 probe 任務(worktree 裡改一個檔案+`git commit`)實測到:畫面短暫出現一張「**審批詳情**」卡片,裡面有「**拒絕**」/「**允許一次**」兩顆按鈕,但抓到畫面時兩顆都已經是 disabled——**核准已經跑完了,不是卡住等人類點**。DeepSeek 自己的軌跡記錄也寫「Per policy, I retry the exact same command once with the narrowest wider mode」→「The escalation was approved and `git add` succeeded」,全程 CC 沒有點任何東西。
+- 這證實了:「worktree 裡 `git commit` 撞到 `.git/worktrees/<name>/index.lock`」這個最常見的升級情境,**dsh 後端在 Workspace Write 檔位下會自己秒過**,不需要 CC 介入按確定。
+- **保留但降級的規則**:上面這條只驗證過「worktree 內、commit 相關」這一種升級情境。如果監控時真的看到「審批詳情」卡片、且「拒絕」/「允許一次」是**可點(非 disabled)狀態**在等——這種才是真的卡住等人:目標路徑在這次任務的 worktree 之內就直接點「允許一次」,計入回報的 `auto_approvals`;目標路徑在 worktree 之外或碰到黑名單範圍 → 不要自動按,停下來問使用者。
+- **Full access 檔位下的行為已於 2026-08-16 補測**:同一個 slugify 小任務用 Full access 跑,全程沒有出現任何升級提示(不管是自動秒過的還是要等人點的那種),`轨迹` 分頁只在一開始有一則「上下文注入 user-approval / permission preset danger-full-access」的系統事件,宣告這個 session 進入高權限模式,之後就一路暢通到 commit。**同任務對比:Full access 32 秒完工,遠快於 Workspace Write 檔位下要繞 rtk debug、撞 index.lock escalation 的版本**——這也是「權限檔位」這題除了安全考量外,額外的速度代價/效益取捨,值得跟使用者說清楚。
+- **這也是監控間隔縮到 5 分鐘的真正原因**(使用者 2026-08-16 提出的因果):既然預設不開 Full access(見觸發第 3 題,預設 Workspace Write),就一定還會有其他種類的升級請求不是「worktree 內 commit」這種能自動秒過的模式,真的卡住等人工點「允許一次」——這種情況下監控間隔越短,那個卡住的任務被發現、被處理的延遲就越短。5 分鐘不是單純求快,是「不開 Full access」這個選擇本身帶來的代價,用縮短輪詢去對沖。
 
 ### 第 9 步 — 完工判定
 依任務類型看對應的產出物(見上面任務類型表)。
@@ -123,12 +147,21 @@ DeepSeek API 是峰谷定價:
 CC **不可自動 merge / 不可自動把報告當定論採用**。跟使用者確認一次(文字回覆「可以合併」之類,或用 `AskUserQuestion`)才能繼續。這關不能被自動化跳過——這類決策屬於「複雜決策」,拍板的人是使用者。
 
 ### 第 12 步 — Merge(純研究/調查類型:交付報告)
-coding 類型:使用者確認後,CC 執行 merge 回 main,DeepSeek 全程不碰這步。純研究/調查類型:沒有 merge 動作,這步等於「把整理好的白話重點回報給使用者」。
+coding 類型:使用者確認後,CC 執行 merge 回 main(`git merge --no-ff <分支> -m "..."`),DeepSeek 全程不碰這步。**2026-08-16 首次端到端實測**:worktree 分支乾淨合回 main、產生真正的雙親 merge commit、merge 後在 main 重跑測試全線綠——整條「merge 這步」之前只有理論設計,現在有真實案例佐證。純研究/調查類型:沒有 merge 動作,這步等於「把整理好的白話重點回報給使用者」。
 
 ### 第 13 步 — 收尾
-coding 類型:刪除 worktree、刪除分支,需要的話重新部署。**如果 `git worktree remove` 卡住報 "Device or resource busy"**(常見於從別台機器 zip 傳過來、混進壞掉 `.claude/`、`.mcp.json` 之類殘骸檔的專案):這通常不是真的檔案被佔用(`fuser`/`lsof`/`/proc/*/fd` 查不到任何 process 握著它),是 CC 自己的沙箱把這些路徑當受保護設定檔擋刪除。解法:先嘗試 `git worktree remove` 失敗就直接 `rm -rf` 整個目錄(帶 `dangerouslyDisableSandbox: true`),再 `git worktree prune` 清 metadata,最後才刪分支——順序錯了(例如先 prune 再刪目錄)一樣會卡住。
 
-純研究/調查類型:輸出資料夾要不要留著給使用者自己決定,不用主動刪。
+**coding 類型,worktree/分支**:
+- 觸發時 `AskUserQuestion` 第 4 題選「是,自動刪除」→ 不用再問,直接刪除 worktree、刪除分支,需要的話重新部署。
+- 選「否」→ 照舊詢問使用者要不要刪。
+- **如果 `git worktree remove` 卡住報 "Device or resource busy"**(常見於從別台機器 zip 傳過來、混進壞掉 `.claude/`、`.mcp.json` 之類殘骸檔的專案):這通常不是真的檔案被佔用(`fuser`/`lsof`/`/proc/*/fd` 查不到任何 process 握著它),是 CC 自己的沙箱把這些路徑當受保護設定檔擋刪除。解法:先嘗試 `git worktree remove` 失敗就直接 `rm -rf` 整個目錄(帶 `dangerouslyDisableSandbox: true`,範圍僅限這個 worktree 路徑本身),再 `git worktree prune` 清 metadata,最後才刪分支——順序錯了(例如先 prune 再刪目錄)一樣會卡住。
+
+**coding 類型,browserclaw/dsh 兩層清理**(2026-08-16 新增,對應「B CLAW 會殘留垃圾群組」這個真實痛點——2026-08-16 實測當下光是別的 agent 留下的 dsh workspace/session 就已經一堆數小時到一天前的殘留,清理是有真實效益的):
+
+1. **dsh 側,刪除這次任務的工作區**(2026-08-16 已兩次實測驗證可靠,不再是 best-effort):回到第 4 步開的那個 browserclaw 分頁,打開側邊欄,對 workspace 路徑等於這次 worktree 路徑的 treeitem 依序執行:`hover`(讓操作按鈕浮出)→**緊接著馬上**`click` 那顆「工作區"<name>"的操作」按鈕(兩個動作分開下但中間不要插入 snapshot/wait,連續執行成功率才高)。⚠️ **偶爾第一次點擊會落空**(點到 treeitem 本身把它收合,而不是點到操作按鈕——2026-08-16 第二次實測就撞到一次):徵兆是點完之後選單沒開、treeitem 反而變成 `[collapsed]`。**解法是重新 `hover` 一次同一個 treeitem,拿到新鮮的按鈕 ref 後立刻再 `click` 一次**,不要重複點同一個舊 ref。開出選單後點「刪除工作區」→跳出的確認 dialog 裡點「刪除工作區」確認鈕。⚠️ **這個動作只會刪掉「工作區」這層分組,不會刪掉底下的 session/對話紀錄**——session 會被移到側欄的「未分組」桶裡繼續留著(這解釋了為什麼側欄「未分組」底下常年一堆歷史 session)。如果要連 session 本身都清掉,還要另外對 session 項目做「歸檔會話」(見 `deepseek-manual` 的 session 操作說明),目前的收尾流程不強制做到這一步,只求「工作區」這層不再持續累積即可。
+2. **browserclaw 側,關掉這次任務的分頁群組**(核心機制已驗證可靠,一定要做,但要留意下面的 ID 對不上陷阱):用 `tab_groups` 工具 `action: "list"` 找到第 4 步 `name_session` 命名的那個群組(群組名會是 `claude/<你當時取的名字>`),**先用 `tabs` 工具 `action: "list"` 交叉核對**——確認 `tab_groups` 回報的那個 page id 真的出現在 `tabs` 回應的「Your tabs」區塊裡。⚠️ **2026-08-16 實測撞過一次兩者對不上**:`tab_groups list` 回報群組掛在 page 166,但 `tabs list` 顯示我實際擁有的分頁是 167,166 反而落在「User's tabs」(不屬於任何 agent)。這種情況下**不要照 `tab_groups` 回報的 page id 去 `close`**,改成直接對 `tabs list` 裡確認是「Your tabs」的那個 page id 做 `tabs` 工具的 `action: "close"`——關掉自己真正擁有的分頁後,對應的群組通常也會跟著消失(2026-08-16 實測驗證了這點)。兩者一致的正常情況下,`tab_groups` 的 `action: "close"` 帶對應 `groupId` 一次呼叫就會關掉群組本身跟裡面所有分頁,不用逐一關 tab。**只准關自己這次任務開的、且經過交叉核對的分頁/群組,絕對不要動其他群組**(不管是使用者自己的分頁,還是其他 agent/session 名下的群組——2026-08-16 實測光是背景就有其他 agent 在跑的 `nba-weekly-news` 相關群組,誤關會打斷別人的任務)。
+
+**純研究/調查類型**:輸出資料夾要不要留著給使用者自己決定,不用主動刪;browserclaw 分頁群組清理邏輯同上(第 2 點)一樣做。
 
 ## Browserclaw 操作已知陷阱
 
@@ -138,13 +171,18 @@ coding 類型:刪除 worktree、刪除分支,需要的話重新部署。**如果
 - **清空訊息框失敗**:用 `fill` 帶空字串會出 `InputValidationError`。改用 `click` 聚焦欄位,接著 `press: Control+a`、再 `press: Delete`。
 - **element ref 失效**:頁面導航/送出/重新渲染後,舊的 `[ref=eN]` 會失效,操作前先重新 `snapshot`。
 - **斷線重連後分頁擁有權消失**:重新用 `tabs` 開新分頁,不要沿用舊的 tab id。**開新分頁後,「回根網址恢復上次 session」這件事不保證成立**(MVP 2.0 實測撞過:重連後的新分頁直接進到空白的「选择工作区」畫面,沒有恢復到原本正在監控的 session)。這時候不要照上一條的邏輯瞎等,直接展開側邊欄,在 session 樹裡找回原本的 workspace/session 節點點進去。
-- **權限檔位選擇**:三檔(Read Only / Workspace Write / Full access),預設 Workspace Write,Full access 要使用者額外同意才能開。
+- **權限檔位選擇**:三檔(Read Only / Workspace Write / Full access)。2026-08-16 起這個選擇已經摺進觸發時的 `AskUserQuestion`(見「觸發」那節第 3 題),UI 上這步只是照使用者選的檔位點下去,不用再另外確認。
 - **`/goal` 送出後輸入框不會清空**:這是正常現象,不是操作失敗,不用重複清空或重送。
 - **完工判定訊號**:goal 完成時,對話裡會出現一則「上下文注入 tool-goal complete: ...」的系統事件,DeepSeek 的收尾回報通常會用「改了什麼 / 驗收條件 / 自查清單」這種結構化小標題——看到這個格式基本可以認定完工,不用每次都去翻軌跡分頁逐條確認。
 - **DeepSeek 側環境坑:worktree 沒有 pytest,且 `pip install --user` 常被 PEP 668(externally-managed-environment)擋下**——這是預期內會發生的事,不算 DeepSeek 出錯。DeepSeek 通常會自己改用 worktree 外的 venv 或 `uv` 裝,這是正確處理方式,但要注意它會不會把安裝路徑弄進白名單範圍內。
 - **測試工具本身會在 worktree 留下白名單外的副產物**:`pytest` 執行會產生 `.pytest_cache/`,匯入模組會產生 `__pycache__/`——這些不是 DeepSeek「自己寫的」,但一樣算「動到白名單以外的檔案」,驗收時要連這些一起檢查有沒有清乾淨,不是只看有沒有多出非預期的 `.py` 檔。
 - **`.claude/.cc-writes/` 空目錄是平台沙箱的基礎設施產物**,跟 DeepSeek 的交付內容無關,已經被全域 gitignore(`~/.config/git/ignore` 的 `**/.claude/.cc-writes/`)排除、git 完全看不到它。看到這個目錄不用緊張,不算 DeepSeek 動了不該動的東西。
 - **DeepSeek 在 worktree 裡跑 `git commit` 幾乎一定要 escalate 到更寬的權限檔位**:worktree 的 `.git` 其實是個指標,指向主 repo 的 `.git/worktrees/<name>/`,那個目錄在 workspace root 之外,預設 Workspace Write 檔位下 sandbox 會擋寫入(常見錯誤是 `index.lock` 寫入失敗)。這是預期內、每次要求 commit 的 worktree 任務都會發生,不是 DeepSeek 犯規——任務書裡可以先講清楚「commit 這步預期要升級權限」,免得它自己繞圈子摸索。
+- **新分頁不一定是空白,可能連恢復到別的任務、還沒送出的完整草稿都會出現**:2026-08-16 實測過一次比文件原本描述更嚴重的情況——不是「恢復上次瀏覽的 session」這麼單純,而是新分頁直接顯示另一個真實委派任務(別的專案、完整任務書文字都在)、且「發送消息」按鈕是可點狀態,只差沒按下去。**開新分頁後,送出任何訊息之前,一定要先看清楚訊息框裡的文字是不是自己這次任務打的**——文字量大、內容明顯不是這次任務的描述,就是踩到這個陷阱,不要因為看到滿版文字就以為是自己剛才輸入的直接送出。正確處理:直接點側邊欄「新建会話」按鈕,不要動暫停/編輯/清除目標,也絕對不要點送出。
+- **全新瀏覽器分頁(這台機器上第一次載入 dsh)會跳出一次性「内測聲明」彈窗**,「繼續」按鈕預設是 disabled,要等幾秒(倒數計時)才會變成可點,不是操作卡住,耐心等即可。
+- **新分頁載入 dsh 可能卡在「Loading plugins…」很久**(2026-08-16 實測過從 15 秒到 100+ 秒都有),看起來跟當下 dsh 服務同時有多少 session/子代理在跑有關——這是清理垃圾 session/workspace 這件事的真實效益證據,不只是介面整潔問題。卡住就耐心等(可以 `wait` 多次 2-3 秒疊加),必要時 `navigate reload` 一次。
+- **worktree 路徑不要建在 CC 自己 sandbox 的暫存目錄**(`$TMPDIR`、`$CLAUDE_JOB_DIR/tmp` 這類):2026-08-16 實測用 `$TMPDIR` 底下的路徑,dsh「選擇工作區目錄」對話框永遠卡在「加載中…」選不到,合理懷疑是 CC sandbox 用了獨立 mount namespace,dsh 這個機器上獨立常駐、不在 CC sandbox 內的服務看不到那個路徑。worktree 要建在真正的專案路徑旁邊(例如 `/home/crazy/<project>-wt` 這種 sibling 目錄),過去驗證過的 `deepseek-test-sandbox-wt`、`江雪琴預測本機版-deepseek-e*` 都是這樣建的。**2026-08-16 稍晚在 dsh 服務不忙的時候重測,真實 `/home/crazy` 路徑的「選擇工作區目錄」對話框秒開、資料夾樹正常列出、選取後 `打開` 正常可點**——確認之前那次卡住是當下 dsh 服務過載的暫時現象,不是路徑本身有問題,結論收斂為「只有 `$TMPDIR` 這類 sandbox 暫存路徑真的不行,真實 `/home/crazy` 路徑沒問題」。**檔案選擇對話框的正確操作方式是逐層點資料夾清單進去**(點「添加工作區」→在列表裡點資料夾名稱一路點到 worktree 那層,清單裡的資料夾名稱會變成麵包屑,選到目標資料夾後「打開」按鈕才會從 disabled 變成可點)——直接在「編輯路徑」文字框打完整路徑按 Enter 兩次都沒能讓「打開」啟用,點資料夾清單這條路徑比較可靠。
+- **這台機器上 DeepSeek 的 bash 環境也套了 `rtk` 的 `_rtk_wrap` 包裝**(2026-08-16 實測發現,之前沒人知道):`git diff` 等指令輸出會被壓縮成只顯示「Changes: 1 file changed, 1 insertion(+)」這種摘要,沒有實際 +/- 逐行內容。DeepSeek 不認得 rtk,實測一次真的因此卡了 11 個步驟(整個任務約 40% 的執行輪數)去除錯這個「奇怪的 diff 格式」,一路查到 git config/`.gitattributes`/git wrapper function,最後才自己發現 `/usr/bin/git`(真實 binary,繞過 wrapper)可以拿到完整 diff。**任務書裡可以先講一句「這台機器的 bash 環境有輸出壓縮,git diff 等指令如果只顯示摘要沒有逐行內容是正常現象,需要完整輸出可以直接呼叫 `/usr/bin/git`」**,省下這筆不必要的除錯輪數——`assets/brief-template.md` 已經補上這條。
 
 ## 跟另一個 skill 的分工
 
