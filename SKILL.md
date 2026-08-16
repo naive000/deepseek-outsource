@@ -7,6 +7,8 @@ description: Directly operates DeepSeek harness (dsh, web UI at http://127.0.0.1
 
 Claude Code(CC,你自己)全程直接操作 browserclaw 去指揮 DeepSeek。使用者不用碰瀏覽器。
 
+**這份 skill 的存在前提**:整套流程建立在「CC 直接操作 browserclaw 控制 dsh 網頁」上,下面第 4-8 步全部是實測記錄下來的操作路徑跟陷阱,目的是讓每一次委派都不用重新摸索,直接加速。跟 `deepseek-manual`(dsh UI 操作手冊)共用同一個前提,兩份文件互相參照。
+
 ## 角色分工(整個 skill 的心智模型)
 
 - **DeepSeek = 執行者**:真的動手寫 code、跑測試、自己抓蟲。
