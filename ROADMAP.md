@@ -30,9 +30,17 @@
 - 已補進 SKILL.md:任務類型表新增第五列、跳過 worktree 改用純輸出資料夾、專屬自查清單、驗收/merge 閘門改成「抽查來源真實性+採用閘門」
 - 待補:實跑一次確認設計真的可行(輸出資料夾隔離夠不夠、DeepSeek 的 web search 工具好不好用、抽查來源真實性這件事在 CC 這端怎麼做最有效率)
 
-## 2026-08-16 第二輪優化(觸發問法+權限+自動清理+5分鐘監控+使用記錄)— 已全部實跑驗證
+## 2026-08-16 第二輪優化(觸發問法+權限+自動清理+5分鐘監控+使用記錄)— 已全部實跑驗證,含完整 SOP 端到端首跑
 
-同日稍晚用一個真實 probe 任務(worktree 內改檔+commit)補完了當時卡住的 3 項驗證:dsh 工作區刪除選單可靠開啟方式已確認、mid-task 升級提示證實在 Workspace Write 檔位下對 commit 相關情境會自動秒過不用人點、worktree 用真實 `/home/crazy` 路徑沒問題(先前卡住是服務過載)。細節見 `PENDING-VERIFICATION.md`。
+同日稍晚用一個真實 probe 任務(worktree 內改檔+commit)補完了當時卡住的 3 項驗證:dsh 工作區刪除選單可靠開啟方式已確認、mid-task 升級提示證實在 Workspace Write 檔位下對 commit 相關情境會自動秒過不用人點、worktree 用真實 `/home/crazy` 路徑沒問題(先前卡住是服務過載)。
+
+**同日晚間再補跑一次完整 14 步 SOP**(使用者要求「全部都要SOP走一輪」),這次用 skill 正式觸發(走 4 題 `AskUserQuestion`,選了 Full access + 自動刪 worktree),真正做到「merge 回 main」而不是只清 worktree——這是第一次把 merge 閘門、merge 動作、merge 後雙層清理串成一條真正的端到端案例。新發現:
+- **Full access 檔位有 dsh 自己的 UI 確認關卡**(勾選「已了解風險」核取方塊)——跟 skill 觸發時的詢問是兩層獨立確認,不衝突。
+- **Full access 下全程零升級摩擦**,同任務規模下 32 秒完工,遠快於 Workspace Write 版本——這是權限檔位選擇的速度/安全取捨,值得讓使用者知道。
+- **`tab_groups list` 回報的 page id 有機率跟 `tabs list` 對不上**(2026-08-16 實測撞到一次):遇到要交叉核對,對不上就改用 `tabs` 工具直接關自己真正擁有的分頁,不要盲信 `tab_groups` 回報的 id。
+- dsh 工作區刪除選單的 hover→click 兩步偶爾第一次會落空(點到 treeitem 本身而非操作按鈕),需要重新 hover 拿新鮮 ref 再點一次。
+
+細節見 `PENDING-VERIFICATION.md`(該檔案的未驗證清單已全數清空)。
 
 使用者直接指定 5 個優化項目,先用 `advisor()` 討論設計、再實測 browserclaw 收集真實資料補足未知數,才落地進 SKILL.md:
 

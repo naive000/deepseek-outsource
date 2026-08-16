@@ -101,6 +101,8 @@ git worktree add -b deepseek/<task-name> <path> <base-branch>
 ### 第 5 步 — 設權限
 用 `/permission` 指令,設成觸發時 `AskUserQuestion` 第 3 題使用者選的檔位,不用再問一次。Full access 是能逃逸沙箱的檔位,但既然觸發時已經讓使用者明確選過,這步驟不用二次確認。
 
+⚠️ **選 Full access 時,dsh 自己還有一道 UI 確認關卡**(2026-08-16 實測發現):點下「Full access」選項後會跳出「確認啟用 Full access?」對話框,裡面有一個必勾選的核取方塊「我已了解風險,並願意繼續」,勾了之後「啟用 Full access」按鈕才會從 disabled 變成可點。這是 dsh 自己的安全閘門,跟這份 skill 觸發時的 `AskUserQuestion` 是兩層獨立的確認——CC 這邊已經有使用者明確選過 Full access,所以照勾照點,不用因為看到這個對話框又跑去問使用者一次。
+
 ### 第 6 步 — 尖峰時段檢查
 這是送出 `/goal` 前的最後關卡,因為第 1-5 步都不花 DeepSeek API 的錢,只有這步之後才開始燒錢。
 
@@ -122,7 +124,7 @@ DeepSeek API 是峰谷定價:
 - 用一個真實 probe 任務(worktree 裡改一個檔案+`git commit`)實測到:畫面短暫出現一張「**審批詳情**」卡片,裡面有「**拒絕**」/「**允許一次**」兩顆按鈕,但抓到畫面時兩顆都已經是 disabled——**核准已經跑完了,不是卡住等人類點**。DeepSeek 自己的軌跡記錄也寫「Per policy, I retry the exact same command once with the narrowest wider mode」→「The escalation was approved and `git add` succeeded」,全程 CC 沒有點任何東西。
 - 這證實了:「worktree 裡 `git commit` 撞到 `.git/worktrees/<name>/index.lock`」這個最常見的升級情境,**dsh 後端在 Workspace Write 檔位下會自己秒過**,不需要 CC 介入按確定。
 - **保留但降級的規則**:上面這條只驗證過「worktree 內、commit 相關」這一種升級情境。如果監控時真的看到「審批詳情」卡片、且「拒絕」/「允許一次」是**可點(非 disabled)狀態**在等——這種才是真的卡住等人:目標路徑在這次任務的 worktree 之內就直接點「允許一次」,計入回報的 `auto_approvals`;目標路徑在 worktree 之外或碰到黑名單範圍 → 不要自動按,停下來問使用者。
-- 這個模式底下還沒驗證過的:Full access 檔位下升級提示行為是否一樣自動過、有沒有真的需要人工點擊才會生效的情境長怎樣——遇到了再補進來。
+- **Full access 檔位下的行為已於 2026-08-16 補測**:同一個 slugify 小任務用 Full access 跑,全程沒有出現任何升級提示(不管是自動秒過的還是要等人點的那種),`轨迹` 分頁只在一開始有一則「上下文注入 user-approval / permission preset danger-full-access」的系統事件,宣告這個 session 進入高權限模式,之後就一路暢通到 commit。**同任務對比:Full access 32 秒完工,遠快於 Workspace Write 檔位下要繞 rtk debug、撞 index.lock escalation 的版本**——這也是「權限檔位」這題除了安全考量外,額外的速度代價/效益取捨,值得跟使用者說清楚。
 - **這也是監控間隔縮到 5 分鐘的真正原因**(使用者 2026-08-16 提出的因果):既然預設不開 Full access(見觸發第 3 題,預設 Workspace Write),就一定還會有其他種類的升級請求不是「worktree 內 commit」這種能自動秒過的模式,真的卡住等人工點「允許一次」——這種情況下監控間隔越短,那個卡住的任務被發現、被處理的延遲就越短。5 分鐘不是單純求快,是「不開 Full access」這個選擇本身帶來的代價,用縮短輪詢去對沖。
 
 ### 第 9 步 — 完工判定
@@ -145,7 +147,7 @@ DeepSeek API 是峰谷定價:
 CC **不可自動 merge / 不可自動把報告當定論採用**。跟使用者確認一次(文字回覆「可以合併」之類,或用 `AskUserQuestion`)才能繼續。這關不能被自動化跳過——這類決策屬於「複雜決策」,拍板的人是使用者。
 
 ### 第 12 步 — Merge(純研究/調查類型:交付報告)
-coding 類型:使用者確認後,CC 執行 merge 回 main,DeepSeek 全程不碰這步。純研究/調查類型:沒有 merge 動作,這步等於「把整理好的白話重點回報給使用者」。
+coding 類型:使用者確認後,CC 執行 merge 回 main(`git merge --no-ff <分支> -m "..."`),DeepSeek 全程不碰這步。**2026-08-16 首次端到端實測**:worktree 分支乾淨合回 main、產生真正的雙親 merge commit、merge 後在 main 重跑測試全線綠——整條「merge 這步」之前只有理論設計,現在有真實案例佐證。純研究/調查類型:沒有 merge 動作,這步等於「把整理好的白話重點回報給使用者」。
 
 ### 第 13 步 — 收尾
 
@@ -156,8 +158,8 @@ coding 類型:使用者確認後,CC 執行 merge 回 main,DeepSeek 全程不碰�
 
 **coding 類型,browserclaw/dsh 兩層清理**(2026-08-16 新增,對應「B CLAW 會殘留垃圾群組」這個真實痛點——2026-08-16 實測當下光是別的 agent 留下的 dsh workspace/session 就已經一堆數小時到一天前的殘留,清理是有真實效益的):
 
-1. **dsh 側,刪除這次任務的工作區**(2026-08-16 已實測驗證可靠,不再是 best-effort):回到第 4 步開的那個 browserclaw 分頁,打開側邊欄,對 workspace 路徑等於這次 worktree 路徑的 treeitem 依序執行:`hover`(讓操作按鈕浮出)→**緊接著馬上**`click` 那顆「工作區"<name>"的操作」按鈕(兩個動作分開下但中間不要插入 snapshot/wait,連續執行成功率才高——2026-08-16 曾經連續兩次點擊沒反應,第三次改成「hover 完立刻 click,再統一補一次 snapshot」的順序才穩定開啟選單)→選單裡點「刪除工作區」→跳出的確認 dialog 裡點「刪除工作區」確認鈕。⚠️ **這個動作只會刪掉「工作區」這層分組,不會刪掉底下的 session/對話紀錄**——session 會被移到側欄的「未分組」桶裡繼續留著(這解釋了為什麼側欄「未分組」底下常年一堆歷史 session)。如果要連 session 本身都清掉,還要另外對 session 項目做「歸檔會話」(見 `deepseek-manual` 的 session 操作說明),目前的收尾流程不強制做到這一步,只求「工作區」這層不再持續累積即可。
-2. **browserclaw 側,關掉這次任務的分頁群組**(已驗證可靠,一定要做):用 `tab_groups` 工具 `action: "list"` 找到第 4 步 `name_session` 命名的那個群組(群組名會是 `claude/<你當時取的名字>`),確認裡面的 page id 都是這次任務自己開的,再用 `tab_groups` 工具 `action: "close"` 帶對應 `groupId`——**一次呼叫就會關掉群組本身跟裡面所有分頁**,不用逐一關 tab。**只准關自己這次任務開的群組,絕對不要動其他群組**(不管是使用者自己的分頁,還是其他 agent/session 名下的群組——2026-08-16 實測光是背景就有其他 agent 在跑的 `nba-weekly-news` 相關群組,誤關會打斷別人的任務)。
+1. **dsh 側,刪除這次任務的工作區**(2026-08-16 已兩次實測驗證可靠,不再是 best-effort):回到第 4 步開的那個 browserclaw 分頁,打開側邊欄,對 workspace 路徑等於這次 worktree 路徑的 treeitem 依序執行:`hover`(讓操作按鈕浮出)→**緊接著馬上**`click` 那顆「工作區"<name>"的操作」按鈕(兩個動作分開下但中間不要插入 snapshot/wait,連續執行成功率才高)。⚠️ **偶爾第一次點擊會落空**(點到 treeitem 本身把它收合,而不是點到操作按鈕——2026-08-16 第二次實測就撞到一次):徵兆是點完之後選單沒開、treeitem 反而變成 `[collapsed]`。**解法是重新 `hover` 一次同一個 treeitem,拿到新鮮的按鈕 ref 後立刻再 `click` 一次**,不要重複點同一個舊 ref。開出選單後點「刪除工作區」→跳出的確認 dialog 裡點「刪除工作區」確認鈕。⚠️ **這個動作只會刪掉「工作區」這層分組,不會刪掉底下的 session/對話紀錄**——session 會被移到側欄的「未分組」桶裡繼續留著(這解釋了為什麼側欄「未分組」底下常年一堆歷史 session)。如果要連 session 本身都清掉,還要另外對 session 項目做「歸檔會話」(見 `deepseek-manual` 的 session 操作說明),目前的收尾流程不強制做到這一步,只求「工作區」這層不再持續累積即可。
+2. **browserclaw 側,關掉這次任務的分頁群組**(核心機制已驗證可靠,一定要做,但要留意下面的 ID 對不上陷阱):用 `tab_groups` 工具 `action: "list"` 找到第 4 步 `name_session` 命名的那個群組(群組名會是 `claude/<你當時取的名字>`),**先用 `tabs` 工具 `action: "list"` 交叉核對**——確認 `tab_groups` 回報的那個 page id 真的出現在 `tabs` 回應的「Your tabs」區塊裡。⚠️ **2026-08-16 實測撞過一次兩者對不上**:`tab_groups list` 回報群組掛在 page 166,但 `tabs list` 顯示我實際擁有的分頁是 167,166 反而落在「User's tabs」(不屬於任何 agent)。這種情況下**不要照 `tab_groups` 回報的 page id 去 `close`**,改成直接對 `tabs list` 裡確認是「Your tabs」的那個 page id 做 `tabs` 工具的 `action: "close"`——關掉自己真正擁有的分頁後,對應的群組通常也會跟著消失(2026-08-16 實測驗證了這點)。兩者一致的正常情況下,`tab_groups` 的 `action: "close"` 帶對應 `groupId` 一次呼叫就會關掉群組本身跟裡面所有分頁,不用逐一關 tab。**只准關自己這次任務開的、且經過交叉核對的分頁/群組,絕對不要動其他群組**(不管是使用者自己的分頁,還是其他 agent/session 名下的群組——2026-08-16 實測光是背景就有其他 agent 在跑的 `nba-weekly-news` 相關群組,誤關會打斷別人的任務)。
 
 **純研究/調查類型**:輸出資料夾要不要留著給使用者自己決定,不用主動刪;browserclaw 分頁群組清理邏輯同上(第 2 點)一樣做。
 
