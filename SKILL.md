@@ -1,6 +1,6 @@
 ---
 name: deepseek-outsource
-description: Directly operates DeepSeek harness (dsh, web UI at http://127.0.0.1:3080/) via the browserclaw MCP browser to outsource a coding subtask, code review, simplification pass, translation/content job, or a pure research/investigation task (web search + summarize, no code) to DeepSeek — runs coding tasks in an isolated git worktree, monitors progress, and independently verifies (+ merges, for coding tasks) the result. Phrases like "丟給 DeepSeek 跑", "分包給 DeepSeek", "叫 DeepSeek 去改", "交給 deepseek 整理/查", "outsource this to deepseek", "delegate this to deepseek", "dsh 那邊處理一下" all trigger this, even if the user doesn't mention worktree, browserclaw, or dsh by name. Do NOT use this for tasks Claude Code should just do itself, or for operating dsh's web UI for exploration/reference purposes (that's a separate manual/reference skill).
+description: 直接操作 DeepSeek harness(dsh,web UI 在 http://127.0.0.1:3080/)透過 browserclaw MCP 瀏覽器,把 coding 子任務、code review、simplify(簡化清理)、翻譯/內容產出,或純研究/調查任務(上網搜尋+整理,不碰 code)分包給 DeepSeek——coding 類任務會在獨立的 git worktree 裡跑,監控進度,並獨立驗收(coding 類另外還要負責 merge)結果。「丟給 DeepSeek 跑」「分包給 DeepSeek」「叫 DeepSeek 去改」「交給 deepseek 整理/查」「outsource this to deepseek」「delegate this to deepseek」「dsh 那邊處理一下」這類說法都會觸發,即使使用者沒提到 worktree、browserclaw 或 dsh 本身。不要用在 Claude Code 自己就該做的任務,也不要用在單純操作 dsh 網頁 UI 做探索/查詢(那是另一個獨立的操作手冊 skill)。
 ---
 
 # DeepSeek Outsource — 把 coding 分包給 DeepSeek 跑
@@ -47,11 +47,34 @@ Skill 一啟動,用一次 `AskUserQuestion` 問完(不要拆成多輪,`AskUserQu
 
 五個選項都是實跑驗證過的真實案例,不是憑空設計——之後如果要加新類型,先找一個真實案例跑過一輪再定模板,不要臨時發明。
 
+### 模式判定(CC 自動判斷,預設標準模式,2026-08-29 新增)
+
+dsh 的「新建会话」畫面上,工作區選擇器右邊有一顆顯示目前模式的按鈕(預設「标准模式」),點開是選單:标准模式 / PTC 模式 / 极简模式 / 创造模式 / 使用者自訂的 `standard-claude` preset。本 skill 只在**标准模式**跟 **PTC 模式**之間判斷,极简/创造/自訂 preset 不在範圍內。⚠️ **這顆按鈕只在新建會話畫面上存在,送出訊息開始跑之後就消失,中途不能切換**(2026-08-29 實測驗證,見第 4 步)——選錯就得整個重開會話,所以要在第 4 步、送出 `/goal` 之前就決定好。
+
+**不新增第 4 題**:觸發時的 `AskUserQuestion` 已經 4 題滿檔,加上使用者的既定偏好是「預設都用標準模式」、日常維運類確認要少問。所以模式判定改成 CC 依下面規則自己套用、預設直接走標準模式不用問;只有規則判定該用 PTC 時,才另外開一次**單題**的 `AskUserQuestion`(選項「PTC 模式(推薦)」放第一個、「標準模式」放第二個),讓使用者一次確認或否決,不強行套用。
+
+**PTC 訊號**(符合 ≥2 條、或單一條特別明顯就算命中):
+- 任務描述裡出現「批量」「一次改一堆」「遍歷」「彙總」「重複 N 次」這類字眼——本質是同一個操作套在一串清單上
+- 要對 ≥10 個檔案/項目做同樣的機械式轉換(codemod、批次改名、格式遷移、多語系 key 批次插入)
+- 邏輯能一次寫完(迴圈+條件判斷+彙總),不需要中途看結果再臨場判斷下一步
+- 同類型任務先前用標準模式跑過,同款工具呼叫重複超過 5-6 次
+
+**站標準模式那邊的情況**(以下任一成立就選標準,兩邊打平也選標準,呼應使用者預設偏好):路徑要邊做邊判斷(除錯/探索類)、步驟只有 1-2 步、需要逐項人工判斷不是機械套用、需要 CC 逐步觀察介入。
+
+**套進五種任務類型**:
+- 一般任務(開發/修復):預設標準,除非明顯是 codemod/批次修改形狀
+- Code Review:固定標準——只看不改,靠的是逐步判斷,不是機械編排
+- Simplify:固定標準——行為等價要逐 commit 判斷,不能一次程式跑完就信
+- 翻譯/內容產出:多語系、key 對稱批次產出時是最強的 PTC 候選;單一檔案/單一語言就用標準
+- 純研究/調查:預設標準,除非是「N 個來源 × M 次取樣,最後彙總」這種形狀
+
+⚠️ **這條規則整理自外部文章(DSH 官方 FAQ + 社群討論),不是本 skill 逐項實跑驗證過的行為**——目前第 8 步「監控間隔 5 分鐘/授權升級自動秒過」這套 SOP,全部只在標準模式下實測過。PTC 模式底下,審批升級卡片、監控訊號、完工判定會不會表現一樣,目前沒有真實案例佐證。比照這份 skill 一貫的規範(「五個任務類型都是實跑驗證過的真實案例,不是憑空設計」),第一次真的選用 PTC 模式跑任務時,要把實際觀察到的行為(升級提示長怎樣、多久看一次進度才夠、完工判定訊號是否一樣)補寫回這一節,不要讓 PTC 這條規則停在紙上談兵。
+
 ## 使用記錄(2026-08-16 新增)
 
 每次觸發都在 `~/.claude/skills/deepseek-outsource/usage-log.jsonl` append 兩筆(這個檔案已加進 `.gitignore`,純本機記錄,不進版控):
 
-- **觸發當下**(問完 `AskUserQuestion` 之後):`{"ts":"<ISO時間>","event":"start","task_type":"...","target":"<repo路徑或輸出資料夾>","permission":"...","auto_delete_worktree":true/false,"offpeak":true/false}`
+- **觸發當下**(問完 `AskUserQuestion` 之後):`{"ts":"<ISO時間>","event":"start","task_type":"...","target":"<repo路徑或輸出資料夾>","permission":"...","auto_delete_worktree":true/false,"offpeak":true/false,"mode":"standard|ptc"}`
 - **第 13 步收尾時**:`{"ts":"<ISO時間>","event":"end","task_type":"...","target":"...","outcome":"merged|adopted|rejected|failed","auto_approvals":<這次跑期間自動核准了幾次升級提示>}`
 
 ⚠️ **這個檔案要用 `Write`/`Edit` 工具寫,不要用 `bash echo >>`**——CC 自己的 sandbox 對 `~/.claude/skills/` 這個路徑的 bash 寫入是擋住的(讀取正常),用 `Read` 讀現有內容、組好新的一行、`Write` 整份寫回即可繞開這個限制。
@@ -98,6 +121,8 @@ git worktree add -b deepseek/<task-name> <path> <base-branch>
 
 工作區選擇走:「選擇工作區」→「添加工作區」→點「编辑路径」→直接貼絕對路徑(worktree 的完整路徑),清單會即時過濾,不用手動點資料夾樹。
 
+**選運行模式**(2026-08-29 實測驗證):「選擇工作區」按鈕右邊那顆顯示目前模式名稱的按鈕(預設「标准模式」),點開跳出選單,五個選項:标准模式 / PTC 模式 / 极简模式 / 创造模式 / 使用者自訂的 `standard-claude` preset。照上面「模式判定」那節的規則選標準或 PTC(极简/创造/自訂 preset 不用管)。⚠️ **一定要在這步、送出 `/goal` 之前選好**——這顆按鈕只在新建會話畫面存在,訊息送出開始跑之後就從畫面消失,沒有中途切換這回事,選錯只能整個重開會話。
+
 ### 第 5 步 — 設權限
 用 `/permission` 指令,設成觸發時 `AskUserQuestion` 第 3 題使用者選的檔位,不用再問一次。Full access 是能逃逸沙箱的檔位,但既然觸發時已經讓使用者明確選過,這步驟不用二次確認。
 
@@ -142,12 +167,69 @@ DeepSeek API 是峰谷定價:
 ### 第 9 步 — 完工判定
 依任務類型看對應的產出物(見上面任務類型表)。
 
+### 複審層級選擇(2026-08-29 新增,夾在第9步之後、第10步之前,只適用於一般任務)
+
+第10步矩陣裡的 `/code-review`,除了 CC 本地跑,還可以外包回 DSH 那邊跑——DSH 端跑 agent 的 CP 值比 CC 本地高很多。這節就是把這個選擇權交給使用者,而不是 CC 自己悄悄決定。
+
+**為什麼在這裡問,不是塞進觸發時的第5題**:觸發當下還看不到 diff,diff 大小、有沒有碰敏感面這些訊號要等第9步完工才看得到,所以放在這個天然停頓點問最準。這題是刻意的例外——雖然這份 skill 一貫傾向少問,但這是使用者明確要求要能選的決策點。
+
+完工後,CC 用**一次**單題 `AskUserQuestion` 問,選項依 CC 的建議排序(參考第10步矩陣的訊號+diff大小+目前是不是離峰):
+1. **DSH 外包複審**(訊號命中時列第一,標「推薦」)
+2. **CC 本地 `/code-review`**
+3. **純人工逐 commit 看,不跑額外工具**
+
+**選 DSH 外包複審時怎麼跑**:
+- **不建新 worktree**,同一個 worktree/分支繼續用。
+- **開一個全新的 dsh 會話**(不是接著原本寫 code 的那個 session 繼續問)——全新 context 才跟原本的 builder session 保持獨立,不會出現「自己審自己、順便幫自己辯護」的問題。
+- 任務書精簡到罐頭範本:「複審這個 worktree 目前的 commits,寫 `FINDINGS.md`,不改任何檔案」,白名單只給 `FINDINGS.md`;原本的第1-3步(討論範圍/建worktree/寫任務書)在這裡濃縮成一句話帶過,不用重跑一輪。
+- **沿用本次任務原本第6步的尖峰/離峰判定**,不用重新問一次。
+- usage-log 記一筆,標記這是接續任務(例如加 `chained_from` 欄位指回原本那筆 start 記錄的 target),方便之後回頭統計。
+
+**鐵規則不變,不管選哪個層級**:DSH 端複審或 CC 本地 `/code-review` 都只是「交件前品管的第二意見」,不是「收件品管」——第10步「CC 逐 commit 讀 diff」這件事還是要做,對複審跑出來的發現也要抽查是否屬實,不能因為多了一層複審就跳過人工看 diff。⚠️ V4 審 V4 結構上比不上 CC(跨模型)審 V4——全新 session 只能緩解「自己審自己」的問題,不能消除模型同源這個結構性弱點。選 DSH 外包複審是拿這個弱點換 CP 值,要讓使用者知道這個取捨,不是無痛的選項。
+
+**`run` 不用另開一趟 DSH 複審**:直接併進原本任務書的自查清單裡,寫「跑起來實測並回報結果」;UI 關鍵的任務,CC/使用者透過 browserclaw 肉眼驗證。要起服務先在任務書裡指定 port,查 [[reference_port_registry]] 避免撞埠。原任務書漏寫這件事時,用 `assets/brief-run-verify.md` 事後補一趟。
+
+**罐頭任務書模板,取代裝 plugin(2026-08-29 定案)**:同日盤點過 `awesome-dsh-plugin` 對應的候選插件,使用者裁決**不安裝**——未審查的社群代碼有 workspace 存取權,而且現有的任務類型機制+下面這組模板已經覆蓋掉同樣的功能,不需要多引入一份沒人審查過的第三方代碼。候選清單(`dsh-command-code-review`/`Viger1/dsh-review`/`dsh-hawkeye-scan`/`dsh-code-security`/`dsh-web-preview`/`dsh-code-smell`)存進 `ROADMAP.md` 當未來參考,不留在這裡佔位置。
+
+改用 `assets/` 底下四份罐頭任務書模板,委派時 CC 現場填空(worktree路徑/分支/`git log <base>..HEAD`/port/這次要聚焦的重點)後直接貼進 dsh session 的 `/goal`——「當場設計」指的是 CC 填這些空格+加 2-3 條這次特有的重點,不是從零生一份任務書:
+
+| 情境 | 模板檔 | 何時用 |
+|---|---|---|
+| 複審(對應 `/code-review`) | `assets/brief-chained-review.md` | 上面「複審層級選擇」選 DSH 外包時用這份 |
+| 安全視角 | `assets/brief-security-review.md` | 第10步矩陣判定要加安全視角時,**併入同一次複審**帶著跑,不用另開一趟任務 |
+| 簡化清理(對應 `/simplify`) | `assets/brief-chained-simplify.md` | merge 之後想清理、或使用者主動要求時用,任務書白名單沿用原任務的白名單 |
+| 跑起來驗證(對應 `run`) | `assets/brief-run-verify.md` | 原任務書漏寫自查清單裡的實測步驟時事後補一趟 |
+
+⚠️ **這整套「複審層級選擇」+四份模板尚未實跑驗證過**,第一次真的用某一份模板時,把實際跑起來的落差補寫回對應的模板檔案跟這一節。也要注意 dsh 目前(見 [[project_deepseek_harness]],2026-08-29 更新到 0.1.2-alpha.1)裸開首頁會 401,要用帶 `?token=` 的 URL 才能開(browserclaw `navigate` 一次即登入)。
+
 ### 第 10 步 — CC 獨立驗收
 **coding 類型(一般任務/Code Review/Simplify/翻譯):**
 - **逐 commit 讀 diff**——不是只看 DeepSeek 的完工報告或自查結果。DeepSeek 的自查是「交件前品管」,CC 這步是「收件品管」,兩者不能互相取代。
 - 獨立重跑全部品質關卡:typecheck / lint / build / 專案特定檢查。**自己重新跑一次,不要相信 DeepSeek 回報的跑測試結果**——如果需要另開虛擬環境驗證(例如 Python venv),CC 自己的沙箱通常不給直接寫 `/tmp`,要用 `$TMPDIR`。**重跑驗證腳本時,如果那個腳本本身會寫入已經 commit 的產出檔(例如報告 json),先想清楚會不會把好資料蓋掉**——最好對複本跑,或先 `git stash`,不要直接對著 committed 檔案原地重跑。
 - 如果 DeepSeek 沒有主動 commit 改動(任務書沒明講的話很可能不會),CC 這步順手幫它 commit 一次再繼續驗收/merge。
 - Code Review 類型:抽查幾條具體發現,對照真實資料/行為驗證是否屬實。
+
+**輔助工具(2026-08-29 新增,CC 自動判斷要不要用,不新增額外提問)**:
+
+CC 自己就有 `/code-review`、`security-review`、`run`、`/simplify` 這幾個收尾指令,以下是怎麼接進第10步——都是**補強**逐 commit 讀 diff 這條鐵規則,不是取代它,工具跑完還是要親自看過 diff,不能因為工具沒抓到就直接放行。
+
+- **`/code-review`**:**一般任務類型的複審層級由上面「複審層級選擇」一節決定**(DSH外包/CC本地/純人工三選一,見上),這裡的「預設跑」只適用於 Simplify 類型(確認簡化沒有動到行為)。真的要跑 CC 本地版本時,針對這次 DeepSeek 的 worktree 分支跑,**要明確指定 level**,不要依賴「沿用上次用過的等級」這種不確定行為。**這步禁止用 `--fix`**——merge 閘門(第11步)還沒過,不該在使用者點頭前先動 diff。⚠️ 對著 worktree 分支下的正確 target 語法還沒實跑驗證過,第一次用時順手確認。
+- **`security-review`**:diff 有碰到認證、輸入解析、外部資料、密鑰、網路請求才跑,其他情況不用。
+- **`run`**:改動涉及 UI/服務行為才跑。起 dev server 前先查 [[reference_port_registry]] 避免撞埠;第13步收尾要記得把這個 server 一起關掉(見下方)。
+- **`/simplify`(預設不跑)**:它會直接套用修改,在 merge 閘門前讓 CC 動 DeepSeek 的產出,會打破「DeepSeek=執行者/CC=品管者」的分工,也讓使用者最後點頭的 diff 不是 DeepSeek 自己寫的。真的要清理,merge 之後另外跑,或乾脆開一個新的 Simplify 類型任務丟給 DeepSeek(這個 skill 本來就有這條任務類型)。
+
+**發現怎麼處理**:阻斷性 correctness 問題不是 CC 自己動手修——退回同一個 dsh session 讓 DeepSeek 自己救(呼應這份 skill 的角色分工),真的搞不定才升級跟使用者講;次要 cleanup 類發現不擋流程,帶進第11步 merge 閘門的回報裡讓使用者看著決定。
+
+**四種 coding 任務類型的預設判法**:
+
+| 任務類型 | `/code-review` | `security-review` | `run` | `/simplify` |
+|---|---|---|---|---|
+| 一般任務 | 見「複審層級選擇」(使用者三選一) | 條件跑(碰敏感面才跑,選 DSH 外包時併入同一次複審) | 條件跑(改UI/服務才跑) | 預設不跑 |
+| Simplify 類型 | 預設跑(確認行為沒變) | 條件跑 | 條件跑 | 不跑(對簡化任務本身重複沒意義) |
+| Code Review 類型 | 預設不跑(委派出去本來就是要 DeepSeek 做這件事,CC 用抽查取代) | 條件跑 | 不適用(沒改 code) | 不跑 |
+| 翻譯/內容產出 | 預設不跑 | 不跑 | 不跑 | 不跑 |
+
+⚠️ **這套工具整合規則尚未實跑驗證過**——目前只是設計,還沒有真實委派案例走過這條路徑。第一次真的用上 `/code-review` 時,把實際指令怎麼下、有沒有抓到真問題補寫回這一節,比照這份 skill 一貫「先跑真案例再定模板」的規範。
 
 **純研究/調查類型:**
 - 抽查一定比例(不用全部)的來源條目,確認真的存在、內容對得上,不是編出來的。
@@ -156,12 +238,14 @@ DeepSeek API 是峰谷定價:
 - 通過後,CC 自己讀完整份報告,**用白話文幫使用者整理重點**,不是把整份報告丟給使用者自己看。
 
 ### 第 11 步 — Merge 閘門(純研究/調查類型改叫「採用閘門」)
-CC **不可自動 merge / 不可自動把報告當定論採用**。跟使用者確認一次(文字回覆「可以合併」之類,或用 `AskUserQuestion`)才能繼續。這關不能被自動化跳過——這類決策屬於「複雜決策」,拍板的人是使用者。
+CC **不可自動 merge / 不可自動把報告當定論採用**。跟使用者確認一次(文字回覆「可以合併」之類,或用 `AskUserQuestion`)才能繼續。這關不能被自動化跳過——這類決策屬於「複雜決策」,拍板的人是使用者。如果第10步用 `/code-review`/`security-review`/`run` 抓到次要(非阻斷性)的 cleanup 類發現,要把這些發現列進這次的回報內容一起讓使用者看,不能自己先斬後奏地略過。
 
 ### 第 12 步 — Merge(純研究/調查類型:交付報告)
 coding 類型:使用者確認後,CC 執行 merge 回 main(`git merge --no-ff <分支> -m "..."`),DeepSeek 全程不碰這步。**2026-08-16 首次端到端實測**:worktree 分支乾淨合回 main、產生真正的雙親 merge commit、merge 後在 main 重跑測試全線綠——整條「merge 這步」之前只有理論設計,現在有真實案例佐證。純研究/調查類型:沒有 merge 動作,這步等於「把整理好的白話重點回報給使用者」。
 
 ### 第 13 步 — 收尾
+
+**如果第 10 步用 `run` 起過 dev server / 背景程序**:先確認已經關掉——`ps aux` 查一下,用 `kill <PID>`(不要用 `pkill -f`,會連自己這條指令的 command line 一起誤殺,見 [[reference_pkill_self_kill_gotcha]]),別留孤兒程序燒 CPU 沒人發現。
 
 **coding 類型,worktree/分支**:
 - 觸發時 `AskUserQuestion` 第 4 題選「是,自動刪除」→ 不用再問,直接刪除 worktree、刪除分支,需要的話重新部署。

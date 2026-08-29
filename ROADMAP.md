@@ -84,6 +84,23 @@
 - 累積多個專案跑過的 brief 範本、白名單黑名單慣例
 - 形成可重用的 per-repo 設定檔,減少每次委派都要從零討論範圍
 
+## 2026-08-29 複審層級選擇 + 罐頭模板(取代裝 plugin)— 已寫進 SKILL.md,待首跑驗證
+
+一般任務完工後新增「複審層級選擇」:DSH外包複審/CC本地`/code-review`/純人工三選一,把「要不要用 DSH 那邊的 CP 值跑複審」這個決策交還給使用者,而不是 CC 自動決定。搭配 `assets/` 底下四份罐頭任務書模板(`brief-chained-review.md`/`brief-security-review.md`/`brief-chained-simplify.md`/`brief-run-verify.md`),委派時 CC 現場填空+加重點,不用每次從零設計任務書。
+
+**曾經考慮過改裝 DSH 端 plugin 來做這件事,使用者裁決不裝**——盤點 `awesome-dsh-plugin`(https://github.com/awesome-dsh-plugin/awesome-dsh-plugin)後找到的候選,存這裡當未來參考,不代表會採用:
+
+| CC 對應指令 | plugin 候選 | 說明 |
+|---|---|---|
+| `/code-review` | `JasonFreeLab/dsh-command-code-review` | 直接註冊 `/code-review` 斜杠指令,五個並行審查視角+逐發現置信度打分 |
+| `/code-review`(進階) | `Viger1/dsh-review` | 對抗式:多個 finder 分視角找,獨立驗證者逐條推翻,一票推翻就丟棄——跟 CC 自己 code-review 的 verify pass 設計理念一致 |
+| `security-review` | `liuqingman/dsh-hawkeye-scan` | `/hawkeye` 指令,AI 驅動源碼安全掃描,輸出 JSON/Markdown/HTML 報告 |
+| `security-review`(替代) | `STARDUSTLC666/dsh-code-security` | 確定性 40+ 規則+密鑰熵偵測+SARIF 匯出 |
+| `run` | `zoumutou/dsh-web-preview` | 側邊網頁預覽,非靜態專案一鍵運行(Cargo/npm/Go/Python)+即時 log |
+| `/simplify` | `lucky8197/dsh-code-smell` | 純唯讀靜態掃描,不套用修改——唯一能在 merge 閘門前安全跑的 simplify 類工具 |
+
+不裝的理由:未審查的社群代碼有 workspace 存取權,而現有任務類型機制+罐頭模板已經覆蓋掉同樣的功能。如果之後真的碰到罐頭模板不夠用的情況(例如需要 SARIF 這種標準化格式對接其他工具),再回頭評估這張表,裝之前照既有規範先討論 gating,不要無限制掛上。
+
 ---
 
 ## 使用方式
