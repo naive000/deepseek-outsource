@@ -86,7 +86,40 @@ dsh 的「新建会话」畫面上,工作區選擇器右邊有一顆顯示目前
 - **沒有「commit」「merge」概念**——第 2、3、11、12、13 步(建 worktree / commit 任務書 / merge 閘門 / merge / 刪 worktree)整組不適用,改成:CC 讀輸出資料夾裡的報告檔、抽查、整理成白話重點回報給使用者,使用者確認要採用才算「轉正」。
 - **自查清單不一樣**(見第 3 步下方)。
 
+## 雙傳輸架構:browserclaw(GUI) vs headless CLI(2026-08-30 新增,headless 已實測)
+
+⚠️ **目前實際採用的傳輸方式仍是 browserclaw(GUI)**——下面第 4-8 步才是這份 skill 現在真的在用的路徑。headless CLI 這條路**還在實驗階段、尚未採用**:`danger-full-access` 啟用不了的根因已經查出且驗證有解法(見下方表格),但**還沒有把「worktree 內 git commit escalation」這個真實情境套用修法後重新端到端跑過**,只驗證了修法能讓 session 的權限 knob 正確落在 danger-full-access。這節內容保留當作技術紀錄+未來參考,**觸發這份 skill 時不要主動建議使用者選 headless**,除非端到端重跑過真實 coding 任務且驗證修好。
+
+下面第 4-8 步描述的是 **browserclaw** 傳輸——透過瀏覽器操作 dsh 網頁 UI。另一條路是 **headless CLI**:直接在終端機跑一次性指令,不開瀏覽器、不留背景 process。兩條路共用同一份任務書/驗收/merge 流程,只有「怎麼把任務送進 dsh」這一段不一樣。
+
+**headless CLI 怎麼跑**(這台機器目前是 tsx 跑原始碼的 dev 模式,不是 build 好的全域 `dsh` 指令):
+```
+DSH_PERMISSION_MODE=<mode> DSH_HOME=<獨立乾淨路徑,見下方 danger-full-access 那列> \
+  node --import "file://<deepseek-game內tsx/esm loader的絕對路徑,例如 /home/crazy/deepseek-game/node_modules/tsx/dist/loader.mjs>" \
+  /home/crazy/deepseek-game/apps/cli/src/bin.ts --profile headless "<任務文字>"
+```
+⚠️ **`DSH_HOME` 不是可有可無的選項**——不指定就會用預設 `~/.dsh`,那是這台機器日常 browserclaw/網頁 UI 在用的同一份家目錄,裡面持久化的 `permission.defaultPreset` 偏好會蓋掉 `DSH_PERMISSION_MODE`(細節見下方表格 danger-full-access 那列)。只要不是刻意要沿用網頁 UI 的偏好,一律給獨立路徑。
+⚠️ **cwd 有限制**:tsx 用 tsconfig-paths 解析 workspace 內部套件(例如 `@deepseek-ai/cordis`),這個解析是照 **cwd** 往上找 tsconfig.json,不是照被執行檔案的位置找。如果 cwd 不在 `deepseek-game` repo 底下(往上找不到它的 tsconfig.json),bare specifier 會退回一般 Node 解析,撈到版本不對的套件,直接炸掉(`SyntaxError: ... does not provide an export named 'FiberState'`)。**目標 workspace 要建在 `deepseek-game` repo 底下的巢狀路徑**(例如 `deepseek-game/.probe-scratch/<name>`),不能是完全獨立於外的 sibling 目錄。這是這台機器 dev 模式特有的限制,正式 build 出來的全域 `dsh` bin 理論上不會有這個限制,但這輪沒有實測驗證。
+
+**2026-08-30 headless probe 實測結果**(worktree 內 `git commit` 這個經典 escalation 情境,`.git` 指向 cwd 之外):
+
+| 驗證項 | 結果 |
+|---|---|
+| workspace-write 檔位 | ✅ 符合預期:cwd 內寫檔成功,但 `git add`/`git commit` 需要寫 `.git/worktrees/<name>/index.lock`(在 workspace 之外)被沙箱擋下,agent 自動重試一次升級到 `danger-full-access`,升級被拒絕(**headless 模式沒有可用的審核管道**),agent 誠實回報「檔案已建立、commit 失敗、原因是什麼」然後乾淨停下——沒有卡住、沒有幻覺聲稱成功。 |
+| danger-full-access 檔位 | ✅ **根因已查出,有可行解法(2026-08-30 第二輪追查)**:`DSH_PERMISSION_MODE` 確實有在 `packages/bundle/base/cordis.patch.yml` 裡正確把 `sandbox-policy`/`approval` 兩個外掛的**初始 config** 切到 danger-full-access,問題出在**後面一步**——`@deepseek-ai/dsh-permission-presets`(`packages/interaction/permission-presets/src/index.ts`)在**每個 `session/created` 事件**都會呼叫 `pinInitialPermission(session)`,對全新 session 無條件執行 `setSandboxMode`/`setApprovalPolicy`,把 knob 覆寫成 `this.defaultPreset` 解析出來的值——而 `this.defaultPreset` 是透過 `installSettingsSection()` 接到**持久化設定檔** `$DSH_HOME/settings.yaml` 的 `permission.defaultPreset` 鍵(`PERMISSION_SETTINGS_NAMESPACE` 那個猜對了一半的線索,真正的持久化來源是這份 YAML,不是猜測中的別的服務)。這台機器的 `~/.dsh/settings.yaml` 因為日常 browserclaw/網頁 UI 使用,已經存了 `permission: defaultPreset: workspace-write`——**每次開新 headless session 都被這條持久化偏好蓋掉,`DSH_PERMISSION_MODE` 環境變數完全被蓋過去,不是沒生效,是被寫穿之後又被覆寫**。**驗證過的解法**:headless 跑 danger-full-access 任務時,額外指定一個**乾淨、獨立的 `DSH_HOME`**(裡面沒有 `settings.yaml`,或至少沒有 `permission.defaultPreset` 這個鍵),`pinInitialPermission` 這時找不到持久化偏好,才會真的落回 `config.defaultPreset ?? inferredDefault`——實測 `session.jsonl` 裡 `permission/preset`/`sandbox/mode`/`approval/policy` 三個事件都正確記成 `danger-full-access`/`danger-full-access`/`never`。**呼叫語法要多加一段 `DSH_HOME=<獨立乾淨路徑>`**,不能沿用預設的 `~/.dsh`(那是日常 browserclaw 在用的,會撞到這條持久化偏好)。 |
+| 完工判定訊號 | Exit code **不可靠**——task 部分失敗(commit 沒做成)但 process 仍然乾淨 exit 0,只要 agent 有把最終答案講完(不是中途崩潰)。要判斷「真的整個任務都做完」必須連著看列印出來的最終回答文字,不能只信退出碼。 |
+| **側欄可見性(這次探測最重要的問題)** | ✅ **確認:headless CLI 跑的 session 會出現在 dsh 網頁 UI 的側欄裡**,分組在「未分組」底下,以啟動時的 cwd 資料夾名稱命名,時間戳正確。**代表其他使用者不需要另外裝 BrowserOS/browserclaw 才能「看畫面」**——用 headless CLI 跑任務,想看進度時直接開瀏覽器貼 `?token=` 網址,在「未分組」裡找到對應 session 點進去就能看完整對話/軌跡,是唯讀監控不是操作介面。 |
+
+**選擇建議**:
+- Headless 適合:CI/腳本、機械化任務。要跑會撞到 escalation 的任務(例如 worktree 內 `git commit`),務必搭配獨立 `DSH_HOME` 才能真的用 danger-full-access——沒搭配獨立 `DSH_HOME` 就等於還在 workspace-write,做不完。
+- browserclaw(GUI)適合:不想處理 `DSH_HOME` 隔離、想要人工在旁邊點「允許一次」逐步核准的 coding 任務——第 4-8 步描述的路徑。
+- 只是想「用瀏覽器看畫面,不想裝 BrowserOS」:headless 跑完(或跑的過程中)開 `?token=` 網址去「未分組」找 session 即可,純觀看不需要 browserclaw 自動化操作。
+
+**已解決**(2026-08-30 第二輪追查):danger-full-access 透過 `DSH_PERMISSION_MODE` 啟用不了的根因跟解法,見上方表格。**還沒做的**:拿修法後的 `DSH_HOME` 隔離套用到「worktree 內 git commit」這個真實 escalation 情境重新端到端跑一次(這輪只驗證了 session 的權限 knob 有正確落在 danger-full-access,沒有重新驗證真實 coding 任務能不能靠這個修法整個跑完不被擋)。
+
 ## 完整流程(14 步)
+
+⚠️ 下面 14 步描述的是 **browserclaw(GUI)** 這條傳輸路徑。走 headless CLI 時,第 4-8 步整段換成上面「雙傳輸架構」寫的指令呼叫,其餘步驟(討論範圍/寫任務書/驗收/merge 閘門/收尾)完全共用。
 
 ### 第 1 步 — 討論範圍
 跟使用者對齊:要改什麼、白名單檔案(允許動的範圍)、黑名單(**不准碰的共用檔案清單**——這是隔離真正生效的關鍵,每次都要寫)、驗收線是什麼樣子算過關。

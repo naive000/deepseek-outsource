@@ -2,7 +2,7 @@
 
 > ⚠️ **非固定路線圖**:以下版本號、順序、內容都只是目前的規劃草稿,不是承諾。實跑過程中發現優先級該調整、某版該拆分或合併、甚至整個方向要改,隨時直接改這份文件,不用照表操課。
 
-目前狀態:**MVP 2.0**(2026-08-16 完整跑通一次,詳見下方)。
+目前狀態(2026-08-30 更新,先前這行停在 MVP 2.0 沒同步):**MVP 1.0/2.0 已完成;MVP 4.0(離峰排程)其實已經做完(08-17定案,見 SKILL.md 第6步),下面 MVP 4.0 段落只是沒回頭勾掉;08-29 複審層級選擇+4份罐頭模板已寫進 SKILL.md 待首跑驗證;08-30 headless 傳輸(見下方新增節)已完成兩輪實測,danger-full-access 阻塞根因已查出且驗證解法(需搭配獨立 `DSH_HOME`),但真實 coding escalation 情境還沒端到端重跑驗證,headless 仍未正式採用**。
 
 這份是草稿,順序跟優先級可以隨時調整——每完成一階段,回來把這份文件的狀態更新掉。
 
@@ -52,10 +52,8 @@
 
 **探測過程中的意外插曲**:第一次搭建 throwaway probe repo 時,腳本裡的 `mkdir`/`cd` 因為目標目錄(`$CLAUDE_JOB_DIR/tmp`)唯讀而失敗,但 `set -e` 沒有真的中止腳本(推測跟 bash 工具的 cwd 重置機制有關),導致後面的 `git init`/`git commit` 意外落在使用者真正的專案 repo(`local_Tradview`)裡,建了一個不該存在的 commit 跟分支。當下立刻用 `git update-ref -d refs/heads/main` + `git reset` 復原成 unborn HEAD、跟原本一模一樣的乾淨狀態,並老實跟使用者報告這個失誤——之後所有需要真實 host 路徑的 scratch 操作一律先確認 `pwd`/測試路徑可寫,不再假設多行腳本裡的 `cd` 失敗會讓後續指令連帶失敗。
 
-## MVP 4.0 — 離峰排程自動化
-- 目前選「排到離峰」之後,使用者要自己記得再手動觸發一次
-- 補一個排程機制(cron 或 ScheduleWakeup),離峰時段到了自動幫使用者把暫存的任務送出去
-- 需要先想清楚:暫存的任務書放哪裡、怎麼避免時間到了但使用者已經不需要這任務了
+## MVP 4.0 — 離峰排程自動化(✅ 已完成,08-17 定案——這段原本寫「待做」是文件沒同步更新)
+- 選「排到離峰」之後不用再問第二次,直接用 `CronCreate` 排一個一次性任務自動送出——細節見 SKILL.md 第6步「選到『排到離峰再跑』之後」那段。
 
 ## MVP 5.0 — 跟「deepseek harness 說明書」skill 對接
 - 另一個平行在做的 skill(dsh 網頁 UI 操作手冊)完成後,把細節性的斜線指令行為改成引用那份文件
@@ -100,6 +98,20 @@
 | `/simplify` | `lucky8197/dsh-code-smell` | 純唯讀靜態掃描,不套用修改——唯一能在 merge 閘門前安全跑的 simplify 類工具 |
 
 不裝的理由:未審查的社群代碼有 workspace 存取權,而現有任務類型機制+罐頭模板已經覆蓋掉同樣的功能。如果之後真的碰到罐頭模板不夠用的情況(例如需要 SARIF 這種標準化格式對接其他工具),再回頭評估這張表,裝之前照既有規範先討論 gating,不要無限制掛上。
+
+## 2026-08-30 headless CLI 傳輸——兩輪實測完成,根因已查出+驗證解法
+
+顧問建議 headless 優先於再蓋一層瀏覽器抽象(GUI/browserclaw 已經有了,不用重做),兩輪 probe 驗證結果已寫進 SKILL.md「雙傳輸架構」節。摘要:
+
+- ✅ 找到 headless CLI 實際呼叫語法,並記錄這台機器 dev 模式下的 cwd 限制(tsx tsconfig-paths 解析要求 cwd 在 `deepseek-game` repo 底下)
+- ✅ workspace-write 檔位下,需要 escalation 的操作(worktree 內 `git commit`)正確 fail-closed,agent 誠實回報,沒有卡住或幻覺
+- ✅ **側欄可見性確認為真**:headless 跑的 session 會出現在 dsh 網頁 UI 側欄「未分組」底下——其他使用者不需要裝 BrowserOS 也能用瀏覽器肉眼監控 headless 任務,這條大幅降低了「B 版本(GUI)」單獨開發的必要性
+- ✅ **danger-full-access 阻塞已解**(第二輪追查):根因是 `@deepseek-ai/dsh-permission-presets` 的 `pinInitialPermission()` 在每個新 session 都會用 `$DSH_HOME/settings.yaml` 裡持久化的 `permission.defaultPreset` 覆寫 `DSH_PERMISSION_MODE` 設定的 knob——這台機器的 `~/.dsh/settings.yaml` 因日常 browserclaw 使用已存了 `workspace-write` 偏好,每次都蓋掉 env var。**解法**:headless 呼叫時額外指定一個獨立、乾淨的 `DSH_HOME`(不能沿用預設 `~/.dsh`),已用 `session.jsonl` 事件記錄實測驗證 `permission/preset`/`sandbox/mode`/`approval/policy` 三個 knob 都正確落在 `danger-full-access`/`danger-full-access`/`never`。細節+正確呼叫語法見 SKILL.md。
+
+下一步(待使用者拍板要不要繼續往下做):
+1. ~~查出 `permission-presets`/`PERMISSION_SETTINGS_NAMESPACE` 到底存在磁碟哪裡、怎麼正確覆蓋~~ ✅ 已完成,見上方
+2. **把「DSH_HOME 隔離修法」套進「worktree 內 git commit」這個真實 escalation 情境,重新端到端跑一次**——這輪只驗證了權限 knob 落點正確,沒有重新驗證真實 coding 任務(含真的需要 escalation 的操作)能不能整個跑完不被擋,這是採用 headless 之前最後一塊拼圖
+3. 视情況評估要不要實測 build 出來的全域 `dsh` bin(而非目前的 tsx dev 模式),確認 cwd 限制是不是 dev-only 的問題
 
 ---
 
