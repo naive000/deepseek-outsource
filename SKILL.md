@@ -165,11 +165,12 @@ git worktree add -b deepseek/<task-name> <path> <base-branch>
 這是送出 `/goal` 前的最後關卡,因為第 1-5 步都不花 DeepSeek API 的錢,只有這步之後才開始燒錢。
 
 DeepSeek API 是峰谷定價:
-- **尖峰**(北京/台灣時間,同一個 UTC+8,不用換算):09:00–12:00、14:00–18:00
-- **離峰**:其餘時段,價格是尖峰的一半
+- **尖峰**(北京/台灣時間,同一個 UTC+8,不用換算,**僅限週一至週五**):09:00–12:00、14:00–18:00
+- **離峰**:其餘時段(含週六、週日整天),價格是尖峰的一半
 
 抓當下時間:
-- **命中尖峰** → 用 `AskUserQuestion` 跳出選項問使用者:「現在直接跑(付尖峰價)」還是「排到離峰再跑」
+- **當天是週六或週日** → 一律當離峰,不用問,直接往下走第 7 步
+- **命中尖峰**(平日且落在上述時段) → 用 `AskUserQuestion` 跳出選項問使用者:「現在直接跑(付尖峰價)」還是「排到離峰再跑」
 - **沒命中(在離峰)** → 不用問,直接往下走第 7 步
 
 **選到「排到離峰再跑」之後,不用再問使用者第二次,直接自動排程執行**(2026-08-17 定案):
@@ -197,6 +198,39 @@ DeepSeek API 是峰谷定價:
 - **Full access 檔位下的行為已於 2026-08-16 補測**:同一個 slugify 小任務用 Full access 跑,全程沒有出現任何升級提示(不管是自動秒過的還是要等人點的那種),`轨迹` 分頁只在一開始有一則「上下文注入 user-approval / permission preset danger-full-access」的系統事件,宣告這個 session 進入高權限模式,之後就一路暢通到 commit。**同任務對比:Full access 32 秒完工,遠快於 Workspace Write 檔位下要繞 rtk debug、撞 index.lock escalation 的版本**——這也是「權限檔位」這題除了安全考量外,額外的速度代價/效益取捨,值得跟使用者說清楚。
 - **這也是監控間隔縮到 5 分鐘的真正原因**(使用者 2026-08-16 提出的因果):既然預設不開 Full access(見觸發第 3 題,預設 Workspace Write),就一定還會有其他種類的升級請求不是「worktree 內 commit」這種能自動秒過的模式,真的卡住等人工點「允許一次」——這種情況下監控間隔越短,那個卡住的任務被發現、被處理的延遲就越短。5 分鐘不是單純求快,是「不開 Full access」這個選擇本身帶來的代價,用縮短輪詢去對沖。
 
+### dsh 服務中斷復原(2026-09-11 新增,監控期間 dsh web 本身掛掉時用)
+
+**事故**:2026-09-11 同時委派 6 個任務(6 個 worktree + 6 個 dsh session),機器上另有 190+ 個 CC process、6 個 worktree 各自跑 npm install/typecheck/vitest,記憶體壓力把 OS 的 OOM killer 逼出來,直接砍掉 dsh web 這支 process。當時它是某個 CC session 用 Bash `run_in_background` 裸跑起來的:沒有 supervisor、`oom_score_adj=200`(CC 給背景子程序的值,kernel 會優先砍它;pm2 daemon 底下的子程序是 0——同日實測比對 `/proc/<pid>/oom_score_adj`),所以它是全機最先被砍的那批。恢復過程靠人手動摸索了一陣子——這節就是把那次摸索沉澱下來,以後直接照做。
+
+**先講結論(2026-09-11 事故現場實測)**:
+- **任務進度不會丟**。dsh 的 session/對話/推理/工具呼叫歷史全部存在 server 端磁碟 `~/.dsh/sessions/`(每個 workspace 一個資料夾),跟 dsh web 這支 process 的死活無關。用同樣指令重啟後開瀏覽器,側欄 6 個 session 全部都在、歷史完整。
+- **中斷時正在跑的 goal 不會自動接續**,要 CC 對每個 session 點「**恢復目標**」按鈕,它會從中斷點精確接續,不是重跑。已完工的 session 不用動。
+- **browserclaw 舊分頁會失效**:服務重啟後原本開著的分頁報 `page N is not owned by this agent`,要用 `tabs` 開新分頁,不能沿用舊 tab id(跟「Browserclaw 操作已知陷阱」的斷線重連那條同一個機制)。
+- **登入通常不用重拿 token**(從原始碼確認):`?token=` 是每次啟動隨機產生的 process launch token(`packages/client/connection/src/browser-auth.ts` 的 `processLaunchToken`),重啟就換;但瀏覽器 cookie 的簽章密鑰持久化在 `~/.dsh/.credentials.yaml`(同檔 `initializeSecret`),所以**同一個瀏覽器 profile 直接開 `http://127.0.0.1:3080/` 就是登入態**。只有全新 profile 或 cookie 過期才會 401,那時用 `bash ~/.claude/skills/deepseek-outsource/scripts/dsh-web.sh url` 拿新的 token 網址(只有 pm2 管的實例拿得到,裸跑的 token 只印在當初啟動它的那個 shell 裡)。
+
+**預防(2026-09-11 已建置,2026-09-11 補修正)**:dsh web 改由 PM2 常駐——PM2 daemon 獨立於任何 CC session、子程序 `oom_score_adj=0`(裸跑是 200,OOM 優先受害者)。**但刻意不接這台機器既有的 `@reboot pm2 resurrect` 開機清單**:使用者要的是「CC 要用 dsh 時,沒開或斷線才觸發啟動」,不是「開機就自動常駐」。所以 `dsh-web.sh` 的 `ensure`/`start`(含 hook 自動觸發的那條路徑)一律**不** `pm2 save`——dsh-web 永遠不會被寫進 `~/.pm2/dump.pm2`,真的重開機後它就是單純沒在跑,直到下一次有人/hook 真的要用它才被拉起來。pm2 daemon 活著時的 `autorestart`(見 ecosystem 設定)已經涵蓋「跑到一半被砍掉/掛掉要自動拉回」這個情境,不需要靠開機清單。
+- 設定檔 `/home/crazy/deepseek-game/ecosystem.dsh-web.config.cjs`(pm2 app 名 `dsh-web`;pin node v22.23.2、cwd `deepseek-game`、`web --no-open --host 127.0.0.1 --port 3080`、2s 起跳指數退避重啟、`kill_timeout` 8s、**不設 `max_memory_restart`**——dsh 同時跑多個 session 記憶體本來就會長,設了會在任務中途自己砍自己)。
+- 控制腳本 `~/.claude/skills/deepseek-outsource/scripts/dsh-web.sh`,子指令 `status / ensure / start / restart / stop / logs / url / adopt`。**從 CC 的 Bash 呼叫一律加 `dangerouslyDisableSandbox: true`**:sandbox 內連不到 127.0.0.1 也連不到 pm2 的 unix socket,會把活著的服務誤判成掛了(2026-09-11 實測:sandbox 內 curl 3080 回 000,sandbox 外回 401)。
+- pm2 二進位一律用絕對路徑 `/home/crazy/.nvm/versions/node/v24.15.0/bin/pm2`(v7.0.1,跟 daemon 同版;`pm2` 不在 PATH),**不要用 `npx pm2`**(會拉 7.0.4,client/daemon 版本不合會觸發 daemon 更新重啟,底下十幾個 app 一起抖)。腳本已寫死絕對路徑,照用即可。
+- 怎麼驗證過:2026-09-11 用同一份 ecosystem 以 `DSH_WEB_NAME=dsh-web-probe DSH_WEB_PORT=3081 DSH_WEB_HOME=<獨立目錄>` 起了一個探測實例——16 秒開機到 401、`pm2 restart` 後 7 秒內回應且 pid 換新、`pm2 stop` 2.7 秒優雅退出、error log 空、子程序 `oom_score_adj=0`、PATH 是跟原裸跑相同的最小集(刻意不含 rtk path-wrappers,否則 DeepSeek 的 git diff 會被壓縮)。探測完 `pm2 delete` 清掉,正式 3080 與 `dump.pm2` 全程沒動。
+- ⚠️ **正式 `dsh-web` 還沒真的切到 pm2 底下**——2026-09-11 當下裸跑的 pid 734935 曾在服務任務、不能中斷,已延後;6 個委派任務全部完工後可以執行 `bash dsh-web.sh adopt --yes`(SIGTERM 舊的 → 等 port 釋放 → `pm2 start`,**不 `pm2 save`**,理由同上 → 比對 `~/.dsh/sessions` 檔案數,然後照下面復原步驟重開分頁)。在那之前 `dsh-web.sh status` 會顯示 `owner=bare`,`url` / `restart` / `stop` 會拒絕動手(它們只對 pm2 管的實例作用)。**pm2 自動拉起真實 `dsh-web` 這件事要等 adopt 之後才算實測過**,第一次撞到時把結果補回這節。
+
+**hook 會替你做的事**(`~/.claude/hooks/dsh-web-guard.sh`,PreToolUse,matcher `^(Bash|mcp__browserclaw__.*)$`,對 2026-09-11 改完 `~/.claude/settings.json` 之後**新開**的 CC session 生效——hook 設定在 session 開始時讀取,當時已開著的 session 沒有。⚠️ 到目前為止只驗證過腳本對合成輸入的輸出形狀,還沒在真實 session 裡看過 deny / additionalContext 真的被注入;第一次新 session 用到時用 `/hooks` 確認有掛上、留意有沒有 `hook error` 通知,然後把結果補回這裡):
+- Bash 裡出現裸跑 dsh web 的指令(`node … bin.ts web`,含絕對路徑 node / `VAR=x` 前綴 / `nohup`/`exec`/`setsid` 前綴;`corepack pnpm dsh web`;deepseek-game 自己的 `start.sh`)→ 直接 deny,拒絕理由裡寫改用 `dsh-web.sh start`。走 pm2 / 控制腳本 / `--dump-config` / `--help` 的放行;`--profile headless` 不受影響;別的 repo 的 `./start.sh` 不會被誤擋(2026-09-11 用 20 組合成輸入驗證過 deny/放行邊界)。
+- `dsh-web.sh ensure`/`start`(hook 觸發的就是 `ensure`)**都不會 `pm2 save`**——2026-09-11 事故報告第一版曾經在第一次註冊進 pm2 時自動存檔,使用者發現後指出這等於變相「開機自動啟動」,已改掉:save 只留一支手動 opt-in 的內部函式(`pm2_save_with_backup`,備份成 `~/.pm2/dump.pm2.bak-dsh-web-<時間>`),不在任何自動路徑被呼叫。pm2 God Daemon 本身掛掉時腳本不會從 hook 裡把 daemon 拉起來(daemon 會繼承那個未知 env 跟 oom 權重),會叫你回一般 shell 用 crontab 那條 `pm2 resurrect`。
+- browserclaw 呼叫:只對「這個 session 碰過 3080」的呼叫才動作,其他 session 每次只做一個檔案 glob 檢查(每次 Bash 呼叫成本約 5ms,20 次實測 91ms)。發現 3080 沒在聽 → 自動跑 `dsh-web.sh ensure` 拉起(pm2 顯示手動 `stopped` 的不拉,尊重人為停止);發現 pid 換了 → 在工具結果旁注入一段 additionalContext,內容就是本節的復原步驟。所以**監控中看到那段注入,不用再猜「任務是不是沒了」,直接照下面步驟做**。
+
+**復原步驟(照順序)**:
+1. `bash ~/.claude/skills/deepseek-outsource/scripts/dsh-web.sh status`(dangerouslyDisableSandbox)——要看到 `LISTENING … http=401 (ready)`。`404 (booting)` 代表還在開機(靜態層先起、plugin 還在載,探測時 restart 後 7 秒是 404、16 秒才 401),等幾秒再看;`DOWN` 就 `dsh-web.sh start`。
+2. browserclaw `tabs` action `new` 開新分頁,`navigate` 到 `http://127.0.0.1:3080/`。回 401 → `dsh-web.sh url` 拿 token 網址再 navigate 一次。
+3. 新分頁可能停在空白「选择工作区」或別的 session(見「Browserclaw 操作已知陷阱」),不要瞎等:展開側欄,依 workspace 路徑找回每一個任務的 session。
+4. 每個中斷時仍在「進行中」的 session:點進去 → 點「**恢復目標**」→ 對話從中斷點接續。已完工的不用動。
+5. 回到第 8 步的 5 分鐘監控節奏;`name_session` 重新命名分頁群組,第 13 步收尾時關的是新分頁、不是舊的。
+
+**判斷過但不做的**:
+- 不做 SessionStart hook:每個 session 開場都去戳 3080,對絕大多數跟 dsh 無關的 session 是純浪費,而且會把使用者刻意 `pm2 stop` 掉的服務又拉起來;PreToolUse 按需觸發已經涵蓋「正要用 dsh」跟「用到一半掛了」兩種時機。
+- 不把 `oom_score_adj` 壓到負值:要 root,這台 `sudo` 壞的(`/etc/sudo.conf` 擁有者錯)。pm2 底下的 0 已經比裸跑的 200 好很多。
+
 ### 第 9 步 — 完工判定
 依任務類型看對應的產出物(見上面任務類型表)。
 
@@ -218,7 +252,7 @@ DeepSeek API 是峰谷定價:
 - **沿用本次任務原本第6步的尖峰/離峰判定**,不用重新問一次。
 - usage-log 記一筆,標記這是接續任務(例如加 `chained_from` 欄位指回原本那筆 start 記錄的 target),方便之後回頭統計。
 
-**鐵規則不變,不管選哪個層級**:DSH 端複審或 CC 本地 `/code-review` 都只是「交件前品管的第二意見」,不是「收件品管」——第10步「CC 逐 commit 讀 diff」這件事還是要做,對複審跑出來的發現也要抽查是否屬實,不能因為多了一層複審就跳過人工看 diff。⚠️ V4 審 V4 結構上比不上 CC(跨模型)審 V4——全新 session 只能緩解「自己審自己」的問題,不能消除模型同源這個結構性弱點。選 DSH 外包複審是拿這個弱點換 CP 值,要讓使用者知道這個取捨,不是無痛的選項。
+**鐵規則不變,不管選哪個層級**:DSH 端複審或 CC 本地 `/code-review` 都只是「交件前品管的第二意見」,不是「收件品管」——第10步「CC 逐 commit 讀 diff」這件事還是要做,對複審跑出來的發現也要抽查是否屬實,不能因為多了一層複審就跳過人工看 diff。⚠️ DeepSeek 審 DeepSeek(不管當下是哪個版本,2026-09-10 已從 V4 系列改名/升級到 `deepseek-flash` V4.1)結構上比不上 CC(跨模型)審 DeepSeek——全新 session 只能緩解「自己審自己」的問題,不能消除模型同源這個結構性弱點,這個弱點不會隨 DeepSeek 換版本而消失。選 DSH 外包複審是拿這個弱點換 CP 值,要讓使用者知道這個取捨,不是無痛的選項。
 
 **`run` 不用另開一趟 DSH 複審**:直接併進原本任務書的自查清單裡,寫「跑起來實測並回報結果」;UI 關鍵的任務,CC/使用者透過 browserclaw 肉眼驗證。要起服務先在任務書裡指定 port,查 [[reference_port_registry]] 避免撞埠。原任務書漏寫這件事時,用 `assets/brief-run-verify.md` 事後補一趟。
 
@@ -299,7 +333,7 @@ coding 類型:使用者確認後,CC 執行 merge 回 main(`git merge --no-ff <�
 - **「新建会话」不是靠回根網址**:回根網址只會恢復上一個瀏覽過的 session,不會清空(純前端 SPA)。要開新會話,直接點側邊欄的「新建会话」按鈕。
 - **清空訊息框失敗**:用 `fill` 帶空字串會出 `InputValidationError`。改用 `click` 聚焦欄位,接著 `press: Control+a`、再 `press: Delete`。
 - **element ref 失效**:頁面導航/送出/重新渲染後,舊的 `[ref=eN]` 會失效,操作前先重新 `snapshot`。
-- **斷線重連後分頁擁有權消失**:重新用 `tabs` 開新分頁,不要沿用舊的 tab id。**開新分頁後,「回根網址恢復上次 session」這件事不保證成立**(MVP 2.0 實測撞過:重連後的新分頁直接進到空白的「选择工作区」畫面,沒有恢復到原本正在監控的 session)。這時候不要照上一條的邏輯瞎等,直接展開側邊欄,在 session 樹裡找回原本的 workspace/session 節點點進去。
+- **斷線重連後分頁擁有權消失**:重新用 `tabs` 開新分頁,不要沿用舊的 tab id。**開新分頁後,「回根網址恢復上次 session」這件事不保證成立**(MVP 2.0 實測撞過:重連後的新分頁直接進到空白的「选择工作区」畫面,沒有恢復到原本正在監控的 session)。這時候不要照上一條的邏輯瞎等,直接展開側邊欄,在 session 樹裡找回原本的 workspace/session 節點點進去。**如果分頁失效的原因是 dsh web 服務本身重啟/被砍**(2026-09-11 OOM 事故),照第 8 步後面「dsh 服務中斷復原」那節走:session 都還在,找回後要對進行中的任務點「恢復目標」。
 - **權限檔位選擇**:三檔(Read Only / Workspace Write / Full access)。2026-08-16 起這個選擇已經摺進觸發時的 `AskUserQuestion`(見「觸發」那節第 3 題),UI 上這步只是照使用者選的檔位點下去,不用再另外確認。
 - **`/goal` 送出後輸入框不會清空**:這是正常現象,不是操作失敗,不用重複清空或重送。
 - **完工判定訊號**:goal 完成時,對話裡會出現一則「上下文注入 tool-goal complete: ...」的系統事件,DeepSeek 的收尾回報通常會用「改了什麼 / 驗收條件 / 自查清單」這種結構化小標題——看到這個格式基本可以認定完工,不用每次都去翻軌跡分頁逐條確認。
