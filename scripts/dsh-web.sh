@@ -57,10 +57,15 @@ wait_ready() {
 }
 
 owner_kind() {  # 印 pm2 / bare / none
+  # 2026-09-13 修:原本拿 pm2_pid()（查詢當下的 pm2 tracked pid）跟 listen_pid()
+  # 比對——pm2 快速重啟時兩次查詢中間 pid 已經換過，會把正在跑、真的 pm2 管的
+  # process 誤判成 bare。改成查 listen_pid 的 ppid 是不是 pm2 God Daemon 本身，
+  # 不受兩次查詢之間的時間差影響。
   local lp; lp=$(listen_pid)
   [ -z "$lp" ] && { echo none; return; }
-  local pp; pp=$(pm2_pid)
-  [ -n "$pp" ] && [ "$pp" = "$lp" ] && { echo pm2; return; }
+  local ppid; ppid=$(ps -p "$lp" -o ppid= 2>/dev/null | tr -d ' ')
+  local dp; dp=$(cat /home/crazy/.pm2/pm2.pid 2>/dev/null)
+  [ -n "$dp" ] && [ "$ppid" = "$dp" ] && { echo pm2; return; }
   echo bare
 }
 
