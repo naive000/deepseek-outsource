@@ -33,6 +33,8 @@ Skill 一啟動,用一次 `AskUserQuestion` 問完(不要拆成多輪,`AskUserQu
 3. **權限檔位**(coding 類型才問;純研究/調查類型跳過,固定用 Workspace Write):Read Only / **Workspace Write**(預設,推薦)/ Full access——不管選哪一檔都要先讓使用者看到選項再決定,不能沿用「預設 Workspace Write 不問、只有 Full access 才問」的舊做法
 4. **Merge 後要不要自動刪除 worktree**(coding 類型才問;純研究/調查類型跳過,輸出資料夾去留仍照舊由使用者決定):**是,自動刪除**(預設,推薦)/ 否,留著讓我自己看——選「是」的話第 13 步收尾不會再問一次;選「否」則第 13 步照舊詢問
 
+**LOOP 提醒(2026-09-21 使用者定,不佔 4 題名額)**:問這組題的**同一則訊息裡**先用一行文字提醒使用者監控 LOOP 間隔——「監控 LOOP 預設 **30 分鐘**,要改請回 `10MIN` 或 `1H`」。三檔:`10MIN` / `30MIN`(**預設**)/ `1H`。使用者沒表示就用 30MIN,不要為了這件事多問一輪;使用者在觸發訊息、任何一題的「Other」、或任務進行中任何時候講了 `10MIN`/`30MIN`/`1H`,立刻照改(已排的 LOOP 要 `CronDelete` 後重排)。怎麼排、怎麼停見第 8 步。
+
 觸發問完之後,順手記一筆使用記錄(見下方「使用記錄」)。
 
 ### 五種任務類型
@@ -68,13 +70,13 @@ dsh 的「新建会话」畫面上,工作區選擇器右邊有一顆顯示目前
 - 翻譯/內容產出:多語系、key 對稱批次產出時是最強的 PTC 候選;單一檔案/單一語言就用標準
 - 純研究/調查:預設標準,除非是「N 個來源 × M 次取樣,最後彙總」這種形狀
 
-⚠️ **這條規則整理自外部文章(DSH 官方 FAQ + 社群討論),不是本 skill 逐項實跑驗證過的行為**——目前第 8 步「監控間隔 5 分鐘/授權升級自動秒過」這套 SOP,全部只在標準模式下實測過。PTC 模式底下,審批升級卡片、監控訊號、完工判定會不會表現一樣,目前沒有真實案例佐證。比照這份 skill 一貫的規範(「五個任務類型都是實跑驗證過的真實案例,不是憑空設計」),第一次真的選用 PTC 模式跑任務時,要把實際觀察到的行為(升級提示長怎樣、多久看一次進度才夠、完工判定訊號是否一樣)補寫回這一節,不要讓 PTC 這條規則停在紙上談兵。
+⚠️ **這條規則整理自外部文章(DSH 官方 FAQ + 社群討論),不是本 skill 逐項實跑驗證過的行為**——目前第 8 步「監控間隔(預設 30 分鐘,原為 5 分鐘)/授權升級自動秒過」這套 SOP,全部只在標準模式下實測過。PTC 模式底下,審批升級卡片、監控訊號、完工判定會不會表現一樣,目前沒有真實案例佐證。比照這份 skill 一貫的規範(「五個任務類型都是實跑驗證過的真實案例,不是憑空設計」),第一次真的選用 PTC 模式跑任務時,要把實際觀察到的行為(升級提示長怎樣、多久看一次進度才夠、完工判定訊號是否一樣)補寫回這一節,不要讓 PTC 這條規則停在紙上談兵。
 
 ## 使用記錄(2026-08-16 新增)
 
 每次觸發都在 `~/.claude/skills/deepseek-outsource/usage-log.jsonl` append 兩筆(這個檔案已加進 `.gitignore`,純本機記錄,不進版控):
 
-- **觸發當下**(問完 `AskUserQuestion` 之後):`{"ts":"<ISO時間>","event":"start","task_type":"...","target":"<repo路徑或輸出資料夾>","permission":"...","auto_delete_worktree":true/false,"offpeak":true/false,"mode":"standard|ptc"}`
+- **觸發當下**(問完 `AskUserQuestion` 之後):`{"ts":"<ISO時間>","event":"start","task_type":"...","target":"<repo路徑或輸出資料夾>","permission":"...","auto_delete_worktree":true/false,"offpeak":true/false,"mode":"standard|ptc","loop":"10MIN|30MIN|1H"}`
 - **第 13 步收尾時**:`{"ts":"<ISO時間>","event":"end","task_type":"...","target":"...","outcome":"merged|adopted|rejected|failed","auto_approvals":<這次跑期間自動核准了幾次升級提示>}`
 
 ⚠️ **這個檔案要用 `Write`/`Edit` 工具寫,不要用 `bash echo >>`**——CC 自己的 sandbox 對 `~/.claude/skills/` 這個路徑的 bash 寫入是擋住的(讀取正常),用 `Read` 讀現有內容、組好新的一行、`Write` 整份寫回即可繞開這個限制。
@@ -156,6 +158,8 @@ git worktree add -b deepseek/<task-name> <path> <base-branch>
 
 **選運行模式**(2026-08-29 實測驗證):「選擇工作區」按鈕右邊那顆顯示目前模式名稱的按鈕(預設「标准模式」),點開跳出選單,五個選項:标准模式 / PTC 模式 / 极简模式 / 创造模式 / 使用者自訂的 `standard-claude` preset。照上面「模式判定」那節的規則選標準或 PTC(极简/创造/自訂 preset 不用管)。⚠️ **一定要在這步、送出 `/goal` 之前選好**——這顆按鈕只在新建會話畫面存在,訊息送出開始跑之後就從畫面消失,沒有中途切換這回事,選錯只能整個重開會話。
 
+**模型/推理等級預設(2026-09-21 使用者定):`DeepSeek-V41-Flash` + 推理等級 `Max`**。來源是 `~/.dsh/settings.yaml` 的 `agent-default-model`(`model: deepseek-flash`、`reasoningEffort: max`,即時生效不用重啟,新建會話才吃到——**既有 session 各自保留建立當下的等級,不會跟著變**)。新建會話後看輸入框下方的「選擇模型」按鈕,應顯示「当前 DeepSeek-V41-Flash,推理等级 Max」;不是的話才用 `/model` 手動切,不用每次都主動去設。要改回別的預設,改那個檔案的 `reasoningEffort`(合法值 `off`/`low`/`high`/`max`),不要改這份 skill。⚠️ headless 傳輸若指定了獨立乾淨的 `DSH_HOME`(見下方雙傳輸那節),就讀不到這份 `settings.yaml`,不會吃到 Max——需要的話在那個 `DSH_HOME` 也放一份同樣的 `agent-default-model` 段(此點依原始碼推論,未實測)。
+
 ### 第 5 步 — 設權限
 用 `/permission` 指令,設成觸發時 `AskUserQuestion` 第 3 題使用者選的檔位,不用再問一次。Full access 是能逃逸沙箱的檔位,但既然觸發時已經讓使用者明確選過,這步驟不用二次確認。
 
@@ -189,7 +193,9 @@ DeepSeek API 是峰谷定價:
 點「命令」按鈕選單裡的 `/goal`,它會把 `/goal ` 文字填進訊息框(不會自動送出)。把任務書內容貼進去,送出。
 
 ### 第 8 步 — 監控
-**固定每 5 分鐘檢查一次**(2026-08-16 從 10 分鐘改快,不可再自行調整;縮短的原因見下——不是單純求快,是跟權限檔位選擇連動的)。看「對話」分頁(排版過的閱讀視圖)快速掃進度;要精確判斷做了什麼動作時看「軌跡」分頁(原始事件表格,含完整參數),比對話分頁可靠。不要更密集地檢查,也不要自己排更短的輪詢間隔。
+**LOOP 檢查間隔由使用者三選一:`10MIN` / `30MIN`(預設)/ `1H`**(2026-09-21 使用者改定,取代 2026-08-16 的「固定 5 分鐘」;觸發時的提醒見「觸發」一節,沒指定就 30MIN)。看「對話」分頁(排版過的閱讀視圖)快速掃進度;要精確判斷做了什麼動作時看「軌跡」分頁(原始事件表格,含完整參數),比對話分頁可靠。間隔只照使用者選的檔,不要自己加密或放寬。
+
+**怎麼排 LOOP**:第 7 步送出 `/goal` 之後**立刻**用 `CronCreate`(`recurring: true`)排——`10MIN` → `*/10 * * * *`、`30MIN` → `*/30 * * * *`、`1H` → `7 * * * *`(避開整點)。`prompt` 要自成一體:哪個 browserclaw 分頁/session 名稱、該看「對話」還是「軌跡」、要回報什麼(進度、卡住的審批卡片、完工訊號)。這是 session-only 排程,不寫磁碟。**完工判定成立(第 9 步)就立刻 `CronDelete`,不要等到第 13 步**;任務中途使用者改檔位就 `CronDelete` 後重排。不要另外再排 `ScheduleWakeup` 當備援(見 [[feedback_no_redundant_wakeups]])。
 
 **遇到授權升級提示,範圍內的不用管,dsh 自己會過**(2026-08-16 首次實測驗證,推翻了原本「CC 要主動幫忙按確定」的設計):
 - 用一個真實 probe 任務(worktree 裡改一個檔案+`git commit`)實測到:畫面短暫出現一張「**審批詳情**」卡片,裡面有「**拒絕**」/「**允許一次**」兩顆按鈕,但抓到畫面時兩顆都已經是 disabled——**核准已經跑完了,不是卡住等人類點**。DeepSeek 自己的軌跡記錄也寫「Per policy, I retry the exact same command once with the narrowest wider mode」→「The escalation was approved and `git add` succeeded」,全程 CC 沒有點任何東西。
@@ -197,7 +203,17 @@ DeepSeek API 是峰谷定價:
 - ⚠️ **2026-09-12 反例,規則已不再無條件成立**:dsh 版本升到 0.1.5-rc.1 後,同一種「worktree 內 `git commit` 撞 `.git/worktrees/<name>/index.lock`」情境,審批卡片**沒有秒過**——`approval/asked` 到 `approval/decided(allowed-once)` 中間實測等了 178 秒,期間「拒絕」/「允許一次」是可點狀態卡在那邊等人(CC 當時 browserclaw 斷線沒在看,不是 CC 點的)。**這條「自動秒過」規則看起來是版本相依的行為,不是 dsh 的穩定契約**——監控時不要假設這個情境一定會自動過,還是要照下面「保留但降級的規則」那條實際去看卡片是不是可點狀態。下次遇到才知道要看哪個版本、順手補一筆版本對照。
 - **保留但降級的規則**:上面這條只驗證過「worktree 內、commit 相關」這一種升級情境。如果監控時真的看到「審批詳情」卡片、且「拒絕」/「允許一次」是**可點(非 disabled)狀態**在等——這種才是真的卡住等人:目標路徑在這次任務的 worktree 之內就直接點「允許一次」,計入回報的 `auto_approvals`;目標路徑在 worktree 之外或碰到黑名單範圍 → 不要自動按,停下來問使用者。
 - **Full access 檔位下的行為已於 2026-08-16 補測**:同一個 slugify 小任務用 Full access 跑,全程沒有出現任何升級提示(不管是自動秒過的還是要等人點的那種),`轨迹` 分頁只在一開始有一則「上下文注入 user-approval / permission preset danger-full-access」的系統事件,宣告這個 session 進入高權限模式,之後就一路暢通到 commit。**同任務對比:Full access 32 秒完工,遠快於 Workspace Write 檔位下要繞 rtk debug、撞 index.lock escalation 的版本**——這也是「權限檔位」這題除了安全考量外,額外的速度代價/效益取捨,值得跟使用者說清楚。
-- **這也是監控間隔縮到 5 分鐘的真正原因**(使用者 2026-08-16 提出的因果):既然預設不開 Full access(見觸發第 3 題,預設 Workspace Write),就一定還會有其他種類的升級請求不是「worktree 內 commit」這種能自動秒過的模式,真的卡住等人工點「允許一次」——這種情況下監控間隔越短,那個卡住的任務被發現、被處理的延遲就越短。5 分鐘不是單純求快,是「不開 Full access」這個選擇本身帶來的代價,用縮短輪詢去對沖。
+- **間隔取捨(2026-09-21 使用者改預設為 30MIN)**:2026-08-16 當初把間隔縮到 5 分鐘的因果是——預設 Workspace Write(不開 Full access)一定還會有不是「worktree 內 commit」那種能自動秒過的升級請求,真的卡住等人工點「允許一次」,間隔越短、卡住的任務被發現的延遲越短。**改成 30MIN/1H 後這個延遲上限就變成 30 分鐘/1 小時**(卡住的審批卡片最壞要等到下一次檢查才被處理)。所以:Workspace Write 且任務很可能要升權(要 commit、寫 worktree 外、裝套件)時,可以**建議**使用者選 `10MIN`,但只建議、決定權在使用者;Full access 或純研究/調查類型(沒有升權問題)選 30MIN/1H 沒有這個代價。
+
+### 監控中途插話糾正 DeepSeek(2026-09-14 新增)
+
+監控時如果發現 DeepSeek 鑽牛角尖(例如死磕一個環境限制、驗證腳本本身有 bug 卻一直往錯方向查),CC 可以直接在 dsh 對話框插話糾正,不用等它自己撞牆撞到放棄。但 **browserclaw 對「DeepSeek 正在生成中」的訊息框有兩段式流程,只做完第一段不會真的送出去**:
+
+1. `act fill` 把糾正文字填進 textbox(`ref` 是輸入框)。
+2. `act click` 送出按鈕——這顆按鈕此時顯示的文字是「**排队发送**」不是「發送消息」,點下去只是把訊息**放進佇列**,UI 會變成一個佇列項目,旁邊三顆按鈕「編輯排隊消息」「刪除排隊消息」「**插話發送**」——**這三顆在剛佇列的當下全部是 disabled**。
+3. ⚠️ **只做到第 2 步,訊息不會馬上被讀到**——它會停在佇列裡,要等 DeepSeek 目前這一整條工具呼叫鏈自然跑到一個停頓點,佇列才會被自動吃掉插進對話。實測(2026-09-14 v4 拖拉排序卡在 headless Chromium DnD 除錯迴圈的案例)這個自然停頓點可能要等 **10 分鐘以上、幾十個工具呼叫**才會出現——如果任務正在一條很長的除錯鏈中間,不會馬上停下來看訊息。
+4. **正確做法**:填完、點「排隊發送」之後,**不要就這樣走開去 grep 別的東西**——再用 `snapshot`/`grep` 盯著那顆「插話發送」按鈕,一旦它從 disabled 變成可點,**立刻點它**才會把訊息立即插進去,不用等自然停頓點。如果盯了一輪(一次監控週期內)按鈕還是 disabled,才代表現在真的插不進去,只能繼續等或考慮更激烈的手段(例如點「停止生成」強制打斷,但這樣可能讓當下的工具呼叫留下半成品,是否要這樣做要跟使用者確認,不要自己決定)。
+5. 判斷插話有沒有真的生效:回到「對話」分頁 grep 你剛剛打的那句話的關鍵字,如果後面接著出現 DeepSeek 的回應在呼應你的內容(例如「The user confirms X, so I'll switch to Y」),才算真的被讀到、開始照做;訊息文字單獨出現但後面沒有呼應,代表還在佇列裡沒被消化。
 
 ### dsh 服務中斷復原(2026-09-11 新增,監控期間 dsh web 本身掛掉時用)
 
@@ -226,7 +242,7 @@ DeepSeek API 是峰谷定價:
 2. browserclaw `tabs` action `new` 開新分頁,`navigate` 到 `http://127.0.0.1:3080/`。回 401 → `dsh-web.sh url` 拿 token 網址再 navigate 一次。
 3. 新分頁可能停在空白「选择工作区」或別的 session(見「Browserclaw 操作已知陷阱」),不要瞎等:展開側欄,依 workspace 路徑找回每一個任務的 session。
 4. 每個中斷時仍在「進行中」的 session:點進去 → 點「**恢復目標**」→ 對話從中斷點接續。已完工的不用動。
-5. 回到第 8 步的 5 分鐘監控節奏;`name_session` 重新命名分頁群組,第 13 步收尾時關的是新分頁、不是舊的。
+5. 回到第 8 步的監控節奏(使用者選的 LOOP 間隔,沒選就 30MIN;`CronCreate` 是 session-only,若 CC session 也重啟過,要重排);`name_session` 重新命名分頁群組,第 13 步收尾時關的是新分頁、不是舊的。
 
 **判斷過但不做的**:
 - 不做 SessionStart hook:每個 session 開場都去戳 3080,對絕大多數跟 dsh 無關的 session 是純浪費,而且會把使用者刻意 `pm2 stop` 掉的服務又拉起來;PreToolUse 按需觸發已經涵蓋「正要用 dsh」跟「用到一半掛了」兩種時機。
@@ -351,3 +367,13 @@ coding 類型:使用者確認後,CC 執行 merge 回 main(`git merge --no-ff <�
 ## 跟另一個 skill 的分工
 
 這個 skill 管「委派工作流程」(討論→worktree→dispatch→監控→驗收→merge)。dsh 網頁 UI 本身各項功能的操作手冊(設定、預設模式、命令選單細節等)是另一個獨立 skill `deepseek-manual` 的範圍,不在這裡重複。
+
+### 「选择工作区目录」對話框永遠「加载中…」（2026-09-14 實測）
+
+症狀：新建會話 → 添加工作區 → 對話框資料夾清單一直「加载中…」，`编辑路径` 打路徑 + Enter 也不動，重載頁面、換分頁、換瀏覽器（browserclaw / BrowserOS MCP）全部一樣。dsh-web pm2 顯示 online、3080 回 401 正常、log 空——**是 dsh 後端的目錄列表 RPC 卡死，跟瀏覽器無關**，當時另一個 agent 的 session 才剛跑完（閒置 15 分鐘）。
+
+解法：確認沒有進行中的 session（`find ~/.dsh/sessions -name '*.jsonl.zstd' -newermt '-5 minutes'` 為空、`pgrep -P <dsh pid>` 只剩 lightpanda），直接 `bash ~/.claude/skills/deepseek-outsource/scripts/dsh-web.sh restart`（dangerouslyDisableSandbox），2 秒回 401，重開分頁後對話框秒開。不要浪費時間在瀏覽器那端。
+
+⚠️ 不要手改 `~/.dsh/storages/workspace.json` 繞過對話框：dsh 執行中改這檔案，前端側欄會整個變「暂无会话」，還原備份才恢復。
+
+另：dialog 的資料夾按鈕不一定在 `li` 裡，用 `[role=dialog] button` 依文字找比較穩；browserclaw 的 session id 在 dsh 卡住期間會頻繁失效（`no session with given id`），每次重試都要重新 `tabs new` 拿新 page id。
